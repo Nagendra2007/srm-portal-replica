@@ -307,7 +307,8 @@
   }
 
   .profile-panel table {
-    width: 100%;
+    width: 100% !important;
+    table-layout: fixed;
     border-collapse: collapse;
     font-size: 13px;
   }
@@ -316,6 +317,29 @@
     padding: 9px 6px;
     border-bottom: 1px solid var(--paper-line);
     vertical-align: top;
+    word-break: break-word;
+    overflow-wrap: break-word;
+  }
+
+  /* SRM's raw table markup sometimes carries its own inline widths
+     from the old portal's layout — this forces every element inside
+     the injected profile HTML to respect our container's width
+     instead of pushing it wider than the screen. overflow-x here is
+     a safety net: if something still doesn't fit, it scrolls inside
+     this card instead of stretching the whole page sideways (which
+     is what was cutting text off at the right edge on mobile). */
+  .profile-panel {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .profile-panel * {
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  body {
+    overflow-x: hidden;
   }
 
   @media (max-width: 480px) {
@@ -323,6 +347,8 @@
     .margin-rule { left: 40px; }
     .holes { left: 16px; }
     .stamp-wrap { width: 70px; height: 70px; top: 22px; right: 20px; }
+    .profile-panel { padding: 22px 16px; }
+    .profile-panel td { font-size: 12px; padding: 8px 4px; }
   }
 </style>
 </head>
