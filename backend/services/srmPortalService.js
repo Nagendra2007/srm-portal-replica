@@ -1,4 +1,5 @@
 import { createWorker } from 'tesseract.js'
+import * as cheerio from 'cheerio'
 
 const CAPTCHA_URL = 'https://student.srmap.edu.in/srmapstudentcorner/captchas'
 const LOGIN_URL = 'https://student.srmap.edu.in/srmapstudentcorner/StudentLoginToPortal'
@@ -10,7 +11,57 @@ const REPORT_URL = 'https://student.srmap.edu.in/srmapstudentcorner/students/rep
 // remember magic numbers.
 export const REPORT_IDS = {
   profile: '1',
-  timetable: '10'
+  timetable: '10',
+  attendance: '3'
+}
+
+const MIN_ATTENDANCE_PERCENT = 75
+
+// SRM's attendance table has 9 columns per subject row:
+// code, description, classesConducted, present, absent, odmlTaken,
+// presentPercent, odmlPercentApproved, attendancePercent — in that
+// exact order. "Can skip" isn't sent by SRM at all; it's derived:
+// how many more classes could you miss (each one also adding to the
+// total) while staying at or above the minimum required percentage.
+export const parseAttendance = (html) => {
+  const $ = cheerio.load(html)
+  const subjects = []
+
+  $('#tblSubjectWiseAttendance tr').each((_, row) => {
+    const cells = $(row).find('td')
+
+    if (cells.length !== 9) {
+      return
+    }
+
+    const code = $(cells[0]).text().trim()
+    const description = $(cells[1]).text().trim()
+    const present = parseInt($(cells[3]).text().trim(), 10)
+    const absent = parseInt($(cells[4]).text().trim(), 10)
+    const attendancePercent = parseFloat($(cells[8]).text().trim())
+
+    if (!code || Number.isNaN(present) || Number.isNaN(absent)) {
+      return
+    }
+
+    const total = present + absent
+    const canSkip = Math.max(
+      0,
+      Math.floor(present / (MIN_ATTENDANCE_PERCENT / 100) - total)
+    )
+
+    subjects.push({
+      code,
+      description,
+      present,
+      absent,
+      total,
+      attendancePercent,
+      canSkip
+    })
+  })
+
+  return subjects
 }
 
 // Creating a Tesseract worker loads the language model from disk,

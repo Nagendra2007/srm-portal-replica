@@ -1,6 +1,6 @@
 import express from 'express'
 import { getClientSession } from '../services/clientSessionStore.js'
-import { fetchReport, fetchBinaryResource, fetchStudentPhotoUrl, REPORT_IDS } from '../services/srmPortalService.js'
+import { fetchReport, fetchBinaryResource, fetchStudentPhotoUrl, parseAttendance, REPORT_IDS } from '../services/srmPortalService.js'
 import { getCachedReport, saveReportCache } from '../services/reportCache.js'
 
 const router = express.Router()
@@ -19,19 +19,6 @@ const requireSession = (req, res) => {
   return session
 }
 
-// The photo tag embeds the CURRENT session's id, never a cached one.
-// Sessions are per-login (a fresh sessionId every time you log in),
-// so a photo URL built during a previous login points at a session
-// that may already be gone — building this fresh every time, even on
-// a cache hit, is what fixes that.
-// The src is relative (not http://localhost:5000/...) since the
-// frontend and backend are served from the same origin now — this
-// makes the tag work identically on localhost and once deployed.
-const buildPhotoTag = (photoUrl, sessionId) => {
-  if (!photoUrl) return ''
-  return `<img src="/api/photo?src=${encodeURIComponent(photoUrl)}&session=${sessionId}">`
-}
-
 router.get('/profile', async (req, res) => {
   const session = requireSession(req, res)
   if (!session) return
@@ -40,40 +27,32 @@ router.get('/profile', async (req, res) => {
   const registrationNumber = session.username
 
   try {
-    // Cache hit: skip SRM entirely for the report + photo URL — but
-    // still rebuild the <img> tag using this request's own sessionId,
-    // since the cached photoUrl is safe to reuse while a baked-in
-    // <img> tag from a previous session would not be.
-    if (registrationNumber) {
-      const cached = getCachedReport(registrationNumber, 'profile')
-      if (cached) {
-        const photoTag = buildPhotoTag(cached.photoUrl, sessionId)
-        res.set('Content-Type', 'text/html')
-        res.set('X-Cache', 'HIT')
-        return res.send(photoTag + cached.reportHtml)
+    const cached = registrationNumber ? getCachedReport(registrationNumber, 'profile') : null
+
+    let reportHtml
+    let photoUrl
+
+    if (cached) {
+      reportHtml = cached.reportHtml
+      photoUrl = cached.photoUrl
+    } else {
+      reportHtml = await fetchReport(session.client, REPORT_IDS.profile)
+      photoUrl = await fetchStudentPhotoUrl(session.client)
+
+      if (registrationNumber) {
+        saveReportCache(registrationNumber, 'profile', { reportHtml, photoUrl })
       }
     }
 
-    // Cache miss (or no username yet) — fetch fresh from SRM.
-    // These two requests hit different SRM pages and don't depend on
-    // each other's result, so running them in parallel roughly halves
-    // the wait compared to doing them one after another.
-    const [reportHtml, photoUrl] = await Promise.all([
-      fetchReport(session.client, REPORT_IDS.profile),
-      fetchStudentPhotoUrl(session.client)
-    ])
-
-    if (registrationNumber) {
-      // Cache the raw pieces, not the rendered <img> tag — the tag
-      // is rebuilt per-request above so it always matches whichever
-      // session is asking.
-      saveReportCache(registrationNumber, 'profile', { reportHtml, photoUrl })
-    }
-
-    const photoTag = buildPhotoTag(photoUrl, sessionId)
+    // Rebuilt fresh every time, cached or not — this is the one part
+    // that must never come from the cache, since it embeds THIS
+    // request's sessionId, not whatever session existed when the
+    // report was first fetched.
+    const photoTag = photoUrl
+      ? `<img src="/api/photo?src=${encodeURIComponent(photoUrl)}&session=${sessionId}">`
+      : ''
 
     res.set('Content-Type', 'text/html')
-    res.set('X-Cache', 'MISS')
     res.send(photoTag + reportHtml)
   } catch (error) {
     console.error('Profile error:', error.message)
@@ -88,27 +67,45 @@ router.get('/timetable', async (req, res) => {
   const registrationNumber = session.username
 
   try {
-    if (registrationNumber) {
-      const cachedHtml = getCachedReport(registrationNumber, 'timetable')
-      if (cachedHtml) {
-        res.set('Content-Type', 'text/html')
-        res.set('X-Cache', 'HIT')
-        return res.send(cachedHtml)
-      }
-    }
+    const cached = registrationNumber ? getCachedReport(registrationNumber, 'timetable') : null
+    const html = cached || await fetchReport(session.client, REPORT_IDS.timetable)
 
-    const html = await fetchReport(session.client, REPORT_IDS.timetable)
-
-    if (registrationNumber) {
+    if (!cached && registrationNumber) {
       saveReportCache(registrationNumber, 'timetable', html)
     }
 
     res.set('Content-Type', 'text/html')
-    res.set('X-Cache', 'MISS')
     res.send(html)
   } catch (error) {
     console.error('Timetable error:', error.message)
     res.status(500).json({ message: 'Failed to fetch timetable' })
+  }
+})
+
+router.get('/attendance', async (req, res) => {
+  const session = requireSession(req, res)
+  if (!session) return
+
+  const registrationNumber = session.username
+
+  try {
+    const cached = registrationNumber ? getCachedReport(registrationNumber, 'attendance') : null
+
+    let subjects = cached
+
+    if (!subjects) {
+      const html = await fetchReport(session.client, REPORT_IDS.attendance)
+      subjects = parseAttendance(html)
+
+      if (registrationNumber) {
+        saveReportCache(registrationNumber, 'attendance', subjects)
+      }
+    }
+
+    res.json(subjects)
+  } catch (error) {
+    console.error('Attendance error:', error.message)
+    res.status(500).json({ message: 'Failed to fetch attendance' })
   }
 })
 
@@ -120,14 +117,12 @@ router.get('/photo', async (req, res) => {
   const session = getClientSession(sessionId)
 
   if (!session) {
-    console.error('Photo error: no valid session for id', sessionId)
     return res.status(401).send()
   }
 
   const photoUrl = req.query.src
 
   if (!photoUrl) {
-    console.error('Photo error: no src query param provided')
     return res.status(400).send()
   }
 
@@ -136,7 +131,7 @@ router.get('/photo', async (req, res) => {
     res.set('Content-Type', contentType)
     res.send(imageBuffer)
   } catch (error) {
-    console.error('Photo error:', error.message, '| src was:', photoUrl)
+    console.error('Photo error:', error.message)
     res.status(500).send()
   }
 })

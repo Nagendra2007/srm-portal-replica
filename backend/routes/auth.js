@@ -26,8 +26,9 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ success: false, message: 'Login rejected by SRM portal' })
     }
 
-    // Tag this session with who's logged in — this is what lets
-    // /profile and /timetable know which student's data to cache.
+    // Ties this session to the student's registration number, so
+    // portal.js can key the report cache by something stable —
+    // sessionId is thrown away on logout, registrationNumber isn't.
     setSessionUsername(sessionId, username)
 
     return res.status(200).json({ success: true, message: 'Login successful' })
