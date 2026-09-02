@@ -1,0 +1,8 @@
+{
+  "name": "Student Register — Roll Call & Attendance Portal",
+  "description": "Super responsive modern student register and attendance portal with light and dark mode support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
