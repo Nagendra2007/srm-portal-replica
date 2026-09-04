@@ -2,17 +2,39 @@
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Student Register — Roll Call & Attendance Portal</title>
 <meta name="description" content="Super responsive modern student register and attendance portal with light and dark mode support.">
 <meta property="og:title" content="Student Register — Roll Call & Attendance Portal">
 <meta property="og:description" content="Super responsive modern student register and attendance portal with light and dark mode support.">
 <meta property="og:type" content="website">
 
-<!-- High-Performance Typography Loading -->
+<!-- Inline favicon: avoids the automatic /favicon.ico request 404ing on every load. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23e11d48'/%3E%3Ctext x='8' y='12' font-size='10' font-family='monospace' fill='white' text-anchor='middle'%3ES%3C/text%3E%3C/svg%3E">
+
+<!-- Theme is resolved before first paint. Reading localStorage from the
+     script at the bottom of <body> meant the hard-coded data-theme="dark"
+     painted first and light-mode users saw a dark flash on every load. -->
+<script>
+  (function () {
+    try {
+      var stored = localStorage.getItem('theme');
+      var theme = stored || (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+      document.documentElement.setAttribute('data-theme', theme);
+    } catch (e) { /* private mode — keep the markup default */ }
+  })();
+</script>
+
+<!-- Typography.
+     The stylesheet was render-blocking: the browser would not paint until it
+     had made a round trip to fonts.googleapis.com. Loading it with
+     media="print" and flipping to "all" on load makes it non-blocking, and
+     display=swap (already set) means text still shows in a fallback face
+     while the webfont arrives. -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Zilla+Slab:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Zilla+Slab:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" media="print" onload="this.media='all';this.onload=null">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Zilla+Slab:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap"></noscript>
 
 <style>
   /* ==========================================================================
@@ -2661,6 +2683,92 @@ function hideProfileSwitchPopup() {
        3. DOM ELEMENTS & CLIENT STATE
        -------------------------------------------------------------------------- */
     const API_BASE = window.location.origin;
+
+    /* ------------------------------------------------------------------------
+       HTML ESCAPING
+
+       Every render function below builds markup with template strings and
+       assigns it through innerHTML. None of the interpolated values were
+       escaped, so any '<' arriving from the SRM portal, from localStorage, or
+       straight from the course-search box was parsed as markup. The search box
+       was directly exploitable: typing
+           <img src=x onerror=alert(1)>
+       and pressing a key ran it, because the "no courses matching" branch
+       interpolated the raw query.
+       ------------------------------------------------------------------------ */
+    const ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+    const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ESCAPE_MAP[ch]);
+
+    /* ------------------------------------------------------------------------
+       CREDENTIAL PERSISTENCE
+
+       "Remember me" used to run localStorage.setItem('password', password),
+       and every saved profile kept its password in the savedAccounts array —
+       all in cleartext, on disk, unexpired. localStorage is readable by any
+       script on this origin, so a single XSS anywhere in the app (see above)
+       leaked every stored SRM password at once, and they also survived on
+       shared or lab machines indefinitely.
+
+       Passwords now live in sessionStorage, which is scoped to the tab and
+       cleared when it closes. Session restore and profile switching still work
+       for as long as the tab is open; after that the password is re-entered.
+
+       Setting this to true restores the old on-disk behaviour. It is here so
+       the choice is yours and explicit, but leaving it false is the point.
+       ------------------------------------------------------------------------ */
+    const PERSIST_PASSWORD_ON_DISK = false;
+
+    const setStoredPassword = (password) => {
+      try { sessionStorage.setItem('password', password); } catch (e) {}
+      if (PERSIST_PASSWORD_ON_DISK) {
+        try { localStorage.setItem('password', password); } catch (e) {}
+      }
+    };
+
+    const clearStoredPassword = () => {
+      try { sessionStorage.removeItem('password'); } catch (e) {}
+      try { localStorage.removeItem('password'); } catch (e) {}
+    };
+
+    // Per-account secrets for profile switching — tab-scoped, never on disk.
+    const accountSecretKey = (username) => `accountSecret:${username}`;
+    const setAccountSecret = (username, password) => {
+      if (!username || !password) return;
+      try { sessionStorage.setItem(accountSecretKey(username), password); } catch (e) {}
+      if (PERSIST_PASSWORD_ON_DISK) {
+        try { localStorage.setItem(accountSecretKey(username), password); } catch (e) {}
+      }
+    };
+    const getAccountSecret = (username) => {
+      if (!username) return '';
+      try {
+        return sessionStorage.getItem(accountSecretKey(username)) ||
+               (PERSIST_PASSWORD_ON_DISK ? localStorage.getItem(accountSecretKey(username)) : '') || '';
+      } catch (e) { return ''; }
+    };
+    const clearAccountSecret = (username) => {
+      if (!username) return;
+      try { sessionStorage.removeItem(accountSecretKey(username)); } catch (e) {}
+      try { localStorage.removeItem(accountSecretKey(username)); } catch (e) {}
+    };
+
+    /* One-time cleanup for anyone upgrading: purge cleartext passwords this
+       app already wrote to disk, otherwise the old values just sit there. */
+    (function purgeLegacyPlaintextPasswords() {
+      if (PERSIST_PASSWORD_ON_DISK) return;
+      try {
+        localStorage.removeItem('password');
+        const raw = localStorage.getItem('savedAccounts');
+        if (raw) {
+          const accounts = JSON.parse(raw);
+          if (Array.isArray(accounts) && accounts.some((a) => a && a.password)) {
+            localStorage.setItem('savedAccounts', JSON.stringify(
+              accounts.map(({ username, displayName }) => ({ username, displayName }))
+            ));
+          }
+        }
+      } catch (e) {}
+    })();
     let sessionId = null;
     let inMemoryUsername = null;
     let inMemoryPassword = null;
@@ -3091,7 +3199,7 @@ function hideProfileSwitchPopup() {
         return `
           <div class="subject-card">
             <div class="subject-card-header">
-              <span class="subject-name">${subject.description}</span>
+              <span class="subject-name">${esc(subject.description)}</span>
               <span class="subject-percent ${statusClass}">${subject.attendancePercent}%</span>
             </div>
             <div class="progress-track">
@@ -3187,8 +3295,8 @@ function hideProfileSwitchPopup() {
 
       // Render Day Filter Pills
       const dayPillsHtml = [
-        `<button type="button" class="day-pill-btn is-today ${selectedFilter === 'TODAY' ? 'active' : ''}" data-day="TODAY">Today (${todayDayName})</button>`,
-        ...allDays.map((d) => `<button type="button" class="day-pill-btn ${selectedFilter === d ? 'active' : ''} ${d === todayDayName ? 'is-today' : ''}" data-day="${d}">${d}</button>`),
+        `<button type="button" class="day-pill-btn is-today ${selectedFilter === 'TODAY' ? 'active' : ''}" data-day="TODAY">Today (${esc(todayDayName)})</button>`,
+        ...allDays.map((d) => `<button type="button" class="day-pill-btn ${selectedFilter === d ? 'active' : ''} ${d === todayDayName ? 'is-today' : ''}" data-day="${esc(d)}">${esc(d)}</button>`),
         `<button type="button" class="day-pill-btn ${selectedFilter === 'ALL' ? 'active' : ''}" data-day="ALL">Full Week</button>`
       ].join('');
 
@@ -3222,9 +3330,9 @@ function hideProfileSwitchPopup() {
           const cleanCode = code || (rawCodeRoom !== '-' && rawCodeRoom !== '&nbsp;' ? rawCodeRoom : '');
           const isFree = !cleanCode || cleanCode === '-' || cleanCode === '&nbsp;' || cleanCode === 'FREE' || cleanCode.toUpperCase() === 'NIL';
 
-          const periodNum = slot.period || slot.slotNumber || (slot.slotIndex != null ? String(slot.slotIndex + 1) : String(sIdx + 1));
-          const periodTime = slot.time || slot.timing || '';
-          const room = (slot.room || slot.roomNo || '').trim();
+          const periodNum = esc(slot.period || slot.slotNumber || (slot.slotIndex != null ? String(slot.slotIndex + 1) : String(sIdx + 1)));
+          const periodTime = esc(slot.time || slot.timing || '');
+          const room = esc((slot.room || slot.roomNo || '').trim());
 
           let courseTitle = (slot.courseTitle || slot.subjectName || slot.title || '').trim();
           if (!courseTitle && cleanCode) {
@@ -3253,10 +3361,10 @@ function hideProfileSwitchPopup() {
               </div>
               <div class="slot-info-col">
                 <div class="slot-header-row">
-                  <span class="slot-course-code">${cleanCode}</span>
+                  <span class="slot-course-code">${esc(cleanCode)}</span>
                   ${room ? `<span class="slot-room-tag"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18"/><path d="M9 21v-4h6v4M9 7h1M9 11h1M14 7h1M14 11h1"/></svg>${room}</span>` : ''}
                 </div>
-                <div class="slot-course-title">${courseTitle || cleanCode}</div>
+                <div class="slot-course-title">${esc(courseTitle || cleanCode)}</div>
               </div>
             </div>
           `;
@@ -3267,7 +3375,7 @@ function hideProfileSwitchPopup() {
             <div class="timetable-day-header">
               <span class="timetable-day-title">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                ${dayObj.day}
+                ${esc(dayObj.day)}
               </span>
               <span class="timetable-day-badge">${countLabel}</span>
             </div>
@@ -3322,16 +3430,16 @@ function hideProfileSwitchPopup() {
       coursesCountBadge.textContent = `${filtered.length} Subjects`;
 
       if (filtered.length === 0) {
-        coursesContent.innerHTML = `<p style="font-family:\'IBM Plex Mono\',monospace;font-size:13px;color:var(--ink-muted);text-align:center;padding:20px;">No courses matching "${filterText}".</p>`;
+        coursesContent.innerHTML = `<p style="font-family:\'IBM Plex Mono\',monospace;font-size:13px;color:var(--ink-muted);text-align:center;padding:20px;">No courses matching "${esc(filterText)}".</p>`;
         return;
       }
 
       const cardsHtml = filtered.map((c) => {
-        const code = c.courseCode || c.code || 'COURSE';
-        const title = c.courseTitle || c.title || 'Untitled Course';
-        const ltpc = c.ltpc || '';
-        const faculty = c.facultyName || c.faculty || 'Faculty Not Assigned';
-        const room = c.roomNo || c.room || 'Main Academic Block';
+        const code = esc(c.courseCode || c.code || 'COURSE');
+        const title = esc(c.courseTitle || c.title || 'Untitled Course');
+        const ltpc = esc(c.ltpc || '');
+        const faculty = esc(c.facultyName || c.faculty || 'Faculty Not Assigned');
+        const room = esc(c.roomNo || c.room || 'Main Academic Block');
         const ltpcTag = ltpc ? `<span class="course-ltpc-badge">LTPC: ${ltpc}</span>` : '';
 
         return `
@@ -4032,16 +4140,20 @@ function hideProfileSwitchPopup() {
       const accounts = getSavedAccounts();
       const existing = accounts.find((a) => a.username === username);
       if (existing) {
-        if (password) existing.password = password;
         if (displayName) existing.displayName = displayName;
+        delete existing.password; // strip any value written by an older build
       } else {
-        accounts.push({ username, password: password || '', displayName: displayName || username });
+        accounts.push({ username, displayName: displayName || username });
       }
       saveSavedAccounts(accounts);
+
+      // The secret is held separately, tab-scoped.
+      setAccountSecret(username, password);
     };
 
     const removeSavedAccount = (username) => {
       saveSavedAccounts(getSavedAccounts().filter((a) => a.username !== username));
+      clearAccountSecret(username);
     };
 
     /* --------------------------------------------------------------------------
@@ -4115,14 +4227,14 @@ function hideProfileSwitchPopup() {
       savedAccountsList.innerHTML = accounts.map((account) => {
         const isActive = account.username === activeUsername;
         return `
-          <div class="saved-account-row${isActive ? ' active' : ''}" data-username="${account.username}">
-            <span class="saved-account-avatar">${getInitials(account.displayName)}</span>
+          <div class="saved-account-row${isActive ? ' active' : ''}" data-username="${esc(account.username)}">
+            <span class="saved-account-avatar">${esc(getInitials(account.displayName))}</span>
             <span class="saved-account-info">
-              <span class="saved-account-name">${account.displayName}</span>
-              <span class="saved-account-reg">${account.username}</span>
+              <span class="saved-account-name">${esc(account.displayName)}</span>
+              <span class="saved-account-reg">${esc(account.username)}</span>
             </span>
             ${isActive ? '<span class="saved-account-active-badge">Active</span>' : ''}
-            <button class="saved-account-remove" data-remove-username="${account.username}" type="button" title="Remove">
+            <button class="saved-account-remove" data-remove-username="${esc(account.username)}" type="button" title="Remove">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
           </div>
@@ -4168,14 +4280,17 @@ function hideProfileSwitchPopup() {
       sessionStorage.setItem('sessionId', sessionId);
       sessionStorage.setItem('username', username);
 
+      // Password goes to sessionStorage (tab-scoped) rather than localStorage.
+      setStoredPassword(password);
+
       if (remember) {
         localStorage.setItem('sessionId', sessionId);
         localStorage.setItem('username', username);
-        localStorage.setItem('password', password);
       } else {
         localStorage.removeItem('sessionId');
         localStorage.removeItem('username');
-        localStorage.removeItem('password');
+        clearStoredPassword();
+        setStoredPassword(password);
       }
 
       upsertSavedAccount(username, password);
@@ -4256,14 +4371,16 @@ function hideProfileSwitchPopup() {
        12. PRE-FILL CREDENTIALS
        -------------------------------------------------------------------------- */
     const storedUsernameForPrefill = localStorage.getItem('username');
-    const storedPasswordForPrefill = localStorage.getItem('password');
     if (storedUsernameForPrefill) {
       document.getElementById('username').value = storedUsernameForPrefill;
-    }
-    if (storedPasswordForPrefill) {
-      document.getElementById('password').value = storedPasswordForPrefill;
       document.getElementById('rememberMe').checked = true;
     }
+
+    // The password field is deliberately left empty. Prefilling it required
+    // keeping cleartext on disk; the username alone is enough to make the
+    // "remember me" flow feel the same, and the browser's own password
+    // manager already handles the rest (the input has
+    // autocomplete="current-password").
 
     restoreSession();
 
@@ -4454,7 +4571,8 @@ function hideProfileSwitchPopup() {
         }
 
         const account = getSavedAccounts().find((a) => a.username === usernameToSwitch);
-        if (!account || !account.password) {
+        const accountPassword = account ? getAccountSecret(account.username) : '';
+        if (!account || !accountPassword) {
           accountMenu.classList.remove('open');
           status.textContent = 'Saved password missing — please log in again';
           showSection(null);
@@ -4482,7 +4600,7 @@ function hideProfileSwitchPopup() {
             }
           }
 
-          await performLogin(account.username, account.password, { remember: true });
+          await performLogin(account.username, accountPassword, { remember: true });
           hideProfileSwitchPopup();
           preloadAllPortalData(account.username);
           ledger.style.display = 'none';
