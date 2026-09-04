@@ -1,0 +1,6 @@
+{
+  "name": "SRM Student Portal Replica",
+  "description": "Reverse-proxy client for the SRM AP student portal: login, profile, timetable, courses and attendance.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

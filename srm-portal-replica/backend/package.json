@@ -1,0 +1,12 @@
+{
+  "_comment": "Dependencies are declared once in the ROOT package.json. This file previously carried a second, independent copy of the same nine dependencies with no lockfile anywhere, so the two lists could drift apart silently and 'works on my machine' would depend on which directory you ran npm install from. Install and run from the repo root instead. This file is safe to delete outright.",
+  "name": "backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "echo 'Run npm start from the repository root instead.' && exit 1"
+  },
+  "license": "ISC"
+}
