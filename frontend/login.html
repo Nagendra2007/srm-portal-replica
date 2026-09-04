@@ -4608,6 +4608,8 @@ function hideProfileSwitchPopup() {
           if (appHeader) appHeader.classList.add('visible');
           window.scrollTo(0, 0);
           loadProfile(account.username);
+          window.location.reload();
+          return;
         } catch (err) {
           hideProfileSwitchPopup();
           status.textContent = err.message || 'Profile switch failed: Invalid credentials or captcha verification failed';
