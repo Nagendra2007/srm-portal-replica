@@ -1,24 +1,13 @@
 {
+  "_comment": "Dependencies are declared once in the ROOT package.json. This file previously carried a second, independent copy of the same nine dependencies with no lockfile anywhere, so the two lists could drift apart silently and 'works on my machine' would depend on which directory you ran npm install from. Install and run from the repo root instead. This file is safe to delete outright.",
   "name": "backend",
   "version": "1.0.0",
-  "description": "",
+  "private": true,
+  "type": "module",
   "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node --max-old-space-size=768 server.js"
+    "start": "echo 'Run npm start from the repository root instead.' && exit 1"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "module",
-  "dependencies": {
-    "axios": "^1.20.0",
-    "axios-cookiejar-support": "^7.0.0",
-    "cheerio": "^1.2.0",
-    "cors": "^2.8.6",
-    "dotenv": "^17.4.2",
-    "express": "^5.2.1",
-    "tesseract.js": "^7.0.0",
-    "tough-cookie": "^6.0.2"
-  }
+  "license": "ISC"
 }
+
