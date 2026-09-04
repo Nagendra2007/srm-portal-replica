@@ -2716,7 +2716,7 @@ function hideProfileSwitchPopup() {
        Setting this to true restores the old on-disk behaviour. It is here so
        the choice is yours and explicit, but leaving it false is the point.
        ------------------------------------------------------------------------ */
-    const PERSIST_PASSWORD_ON_DISK = false;
+    const PERSIST_PASSWORD_ON_DISK = true;
 
     const setStoredPassword = (password) => {
       try { sessionStorage.setItem('password', password); } catch (e) {}
