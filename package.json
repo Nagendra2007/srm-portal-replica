@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "node --max-old-space-size=768 backend/server.js",
     "build": "echo 'No build step required'",
@@ -12,7 +15,8 @@
     "axios": "^1.20.0",
     "axios-cookiejar-support": "^7.0.0",
     "cheerio": "^1.2.0",
-    "cors": "^2.8.6",
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "tesseract.js": "^7.0.0",
