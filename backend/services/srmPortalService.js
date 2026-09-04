@@ -1,15 +1,21 @@
 import { createWorker } from 'tesseract.js'
 import * as cheerio from 'cheerio'
+import fs from 'fs'
 import path from 'path'
+import { fileURLToPath } from 'url'
 
-const CAPTCHA_URL = 'https://student.srmap.edu.in/srmapstudentcorner/captchas'
-const LOGIN_URL = 'https://student.srmap.edu.in/srmapstudentcorner/StudentLoginToPortal'
-const REPORT_URL = 'https://student.srmap.edu.in/srmapstudentcorner/students/report/studentreportresources.jsp'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-// SRM's report endpoint returns different data depending on which
-// "ids" value you send it — same URL, same shape of request, just
-// a different report. Naming them here means routes never need to
-// remember magic numbers.
+export const SRM_HOST = 'student.srmap.edu.in'
+const SRM_BASE_URL = `https://${SRM_HOST}/srmapstudentcorner/`
+
+const CAPTCHA_URL = `${SRM_BASE_URL}captchas`
+const LOGIN_URL = `${SRM_BASE_URL}StudentLoginToPortal`
+const REPORT_URL = `${SRM_BASE_URL}students/report/studentreportresources.jsp`
+const DASHBOARD_URL = `${SRM_BASE_URL.replace(/\/$/, '')}/HRDSystem`
+const ATTENDANCE_URL = `${SRM_BASE_URL}students/transaction/studentattendanceresources.jsp`
+const TODAY_ATTENDANCE_URL = `${SRM_BASE_URL}students/transaction/studentattendance.jsp`
+
 export const REPORT_IDS = {
   profile: '1',
   timetable: '10',
@@ -18,41 +24,80 @@ export const REPORT_IDS = {
 
 const MIN_ATTENDANCE_PERCENT = 75
 
+/* --------------------------------------------------------------------------
+   SSRF GUARD
+   Anything that takes a URL from the client must be pinned to SRM's host.
+   Previously /api/photo passed ?src= straight through, so the server would
+   fetch any URL asked of it — including cloud metadata and localhost.
+   -------------------------------------------------------------------------- */
+export const resolveSrmUrl = (url) => {
+  const resolved = new URL(url, SRM_BASE_URL)
+
+  if (resolved.protocol !== 'https:' || resolved.hostname !== SRM_HOST) {
+    const error = new Error('Refusing to fetch a non-SRM URL')
+    error.statusCode = 400
+    throw error
+  }
+
+  return resolved.href
+}
+
+/* --------------------------------------------------------------------------
+   SESSION / LOGIN STATE DETECTION
+   Single source of truth — checkSessionExpiry and isLoginSuccessful used to
+   carry two byte-identical copies of this list, which is how they drift.
+   -------------------------------------------------------------------------- */
+const LANDING_PAGE_MARKERS = [
+  'developed by: firstline infotech',
+  'enter application number',
+  'enter captcha text',
+  'txtusername',
+  'txtauthkey'
+]
+
+// FIX: 'incorrect' on its own matched any page that happened to contain the
+// word. Anchored to the phrases SRM actually renders instead.
+const LOGIN_ERROR_MARKERS = [
+  'invalid captcha',
+  'invalid username',
+  'invalid password',
+  'incorrect username',
+  'incorrect password',
+  'authentication failed'
+]
+
+const isLandingPage = (lower) => LANDING_PAGE_MARKERS.some((m) => lower.includes(m))
+
 export const checkSessionExpiry = (html) => {
   if (!html || typeof html !== 'string') return
-  const lower = html.toLowerCase()
-  const stillOnLandingPage =
-    lower.includes('developed by: firstline infotech') ||
-    lower.includes('enter application number') ||
-    lower.includes('enter captcha text') ||
-    lower.includes('freshers') ||
-    lower.includes('senior students') ||
-    lower.includes('txtusername') ||
-    lower.includes('txtauthkey')
 
-  if (stillOnLandingPage) {
+  if (isLandingPage(html.toLowerCase())) {
     const error = new Error('SRM session expired or logged out')
     error.statusCode = 401
     throw error
   }
 }
 
-// SRM's attendance table has 9 columns per subject row:
-// code, description, classesConducted, present, absent, odmlTaken,
-// presentPercent, odmlPercentApproved, attendancePercent — in that
-// exact order. "Can skip" isn't sent by SRM at all; it's derived:
-// how many more classes could you miss (each one also adding to the
-// total) while staying at or above the minimum required percentage.
+// FIX: this used to `return true` when the body was empty or not a string —
+// i.e. an empty response from SRM counted as a successful login. Failing
+// closed is the only safe default for an auth check.
+const isLoginSuccessful = (html) => {
+  if (!html || typeof html !== 'string') return false
+
+  const lower = html.toLowerCase()
+  return !isLandingPage(lower) && !LOGIN_ERROR_MARKERS.some((m) => lower.includes(m))
+}
+
+/* --------------------------------------------------------------------------
+   PARSERS
+   -------------------------------------------------------------------------- */
 export const parseAttendance = (html) => {
   const $ = cheerio.load(html)
   const subjects = []
 
   $('#tblSubjectWiseAttendance tr').each((_, row) => {
     const cells = $(row).find('td')
-
-    if (cells.length !== 9) {
-      return
-    }
+    if (cells.length !== 9) return
 
     const code = $(cells[0]).text().trim()
     const description = $(cells[1]).text().trim()
@@ -60,9 +105,7 @@ export const parseAttendance = (html) => {
     const absent = parseInt($(cells[4]).text().trim(), 10)
     const attendancePercent = parseFloat($(cells[8]).text().trim())
 
-    if (!code || Number.isNaN(present) || Number.isNaN(absent)) {
-      return
-    }
+    if (!code || Number.isNaN(present) || Number.isNaN(absent)) return
 
     const total = present + absent
     const canSkip = Math.max(
@@ -70,55 +113,36 @@ export const parseAttendance = (html) => {
       Math.floor(present / (MIN_ATTENDANCE_PERCENT / 100) - total)
     )
 
-    subjects.push({
-      code,
-      description,
-      present,
-      absent,
-      total,
-      attendancePercent,
-      canSkip
-    })
+    subjects.push({ code, description, present, absent, total, attendancePercent, canSkip })
   })
 
   return subjects
 }
 
-// Parses the SRM timetable HTML (ids=10) which contains:
-// 1. #tblClassTimetable (weekly schedule with periods, timing, course code, room)
-// 2. #tblSubjectList (subject details with LTPC, faculty names, classrooms)
+const clean = (text) => text.replace(/\u00a0/g, '').trim()
+
 export const parseTimetableData = (html) => {
   if (!html) return { periods: [], schedule: [], subjects: [] }
   const $ = cheerio.load(html)
 
-  // 1. Periods & Timings
   const periods = []
   const periodNums = []
 
-  // Check header rows for slot numbers
   $('#tblClassTimetable tr.timetablehead td, #tblClassTimetable tr:first-child td, #tblClassTimetable tr:first-child th').each((i, cell) => {
-    const num = $(cell).text().replace(/\u00a0/g, '').trim()
-    if (num && num !== '&nbsp;' && !/^(day|time|period)/i.test(num)) {
-      periodNums.push(num)
-    }
+    const num = clean($(cell).text())
+    if (num && num !== '&nbsp;' && !/^(day|time|period)/i.test(num)) periodNums.push(num)
   })
 
-  // Check subheader or second row for slot timings
   $('#tblClassTimetable tr.subheader td, #tblClassTimetable tr:nth-child(2) td').each((i, cell) => {
-    const timing = $(cell).text().replace(/\u00a0/g, '').trim()
-    if (timing && timing !== '&nbsp;' && !/^(day|time|period)/i.test(timing) && (timing.includes(':') || timing.includes('-') || timing.toLowerCase().includes('to'))) {
-      const idx = periods.length
-      const slotNum = periodNums[idx] || String(idx + 1)
-      periods.push({
-        slotNumber: slotNum,
-        period: slotNum,
-        timing: timing.replace(/\s+/g, ' '),
-        time: timing.replace(/\s+/g, ' ')
-      })
+    const timing = clean($(cell).text())
+    if (timing && timing !== '&nbsp;' && !/^(day|time|period)/i.test(timing) &&
+        (timing.includes(':') || timing.includes('-') || timing.toLowerCase().includes('to'))) {
+      const slotNum = periodNums[periods.length] || String(periods.length + 1)
+      const normalized = timing.replace(/\s+/g, ' ')
+      periods.push({ slotNumber: slotNum, period: slotNum, timing: normalized, time: normalized })
     }
   })
 
-  // 2. Schedule Grid by Day
   const schedule = []
   const validDayPattern = /^(monday|tuesday|wednesday|thursday|friday|saturday|sunday|day\s*[-_]?\s*[1-6]|day\s*[ivx]+)/i
 
@@ -126,20 +150,18 @@ export const parseTimetableData = (html) => {
     const cells = $(row).find('td, th')
     if (cells.length < 2) return
 
-    const firstCellText = $(cells[0]).text().replace(/\u00a0/g, '').trim()
-    if (!firstCellText || !validDayPattern.test(firstCellText)) {
-      return
-    }
+    const firstCellText = clean($(cells[0]).text())
+    if (!firstCellText || !validDayPattern.test(firstCellText)) return
 
     const dayName = firstCellText.replace(/\s+/g, ' ')
     const slots = []
 
     $(row).find('td.timetabledetails, td:not(:first-child)').each((colIdx, cell) => {
-      // Skip if this cell is header
-      if ($(cell).hasClass('subheader') || $(cell).hasClass('timetablehead')) return
+      const $cell = $(cell)
+      if ($cell.hasClass('subheader') || $cell.hasClass('timetablehead')) return
 
-      const title = $(cell).attr('title')?.trim() || ''
-      const rawText = $(cell).text().replace(/\u00a0/g, '').trim()
+      const title = $cell.attr('title')?.trim() || ''
+      const rawText = clean($cell.text())
 
       let code = ''
       let room = ''
@@ -149,7 +171,7 @@ export const parseTimetableData = (html) => {
           code = match[1].trim()
           room = match[2].trim()
         } else if (rawText.includes('\n')) {
-          const parts = rawText.split('\n').map(p => p.trim()).filter(Boolean)
+          const parts = rawText.split('\n').map((p) => p.trim()).filter(Boolean)
           code = parts[0] || rawText
           room = parts[1] || ''
         } else {
@@ -157,8 +179,9 @@ export const parseTimetableData = (html) => {
         }
       }
 
-      const pNum = periods[colIdx]?.period || periods[colIdx]?.slotNumber || String(colIdx + 1)
-      const pTiming = periods[colIdx]?.time || periods[colIdx]?.timing || ''
+      const slot = periods[colIdx]
+      const pNum = slot?.period || slot?.slotNumber || String(colIdx + 1)
+      const pTiming = slot?.time || slot?.timing || ''
 
       slots.push({
         slotIndex: colIdx,
@@ -167,39 +190,33 @@ export const parseTimetableData = (html) => {
         timing: pTiming,
         time: pTiming,
         codeRoom: rawText,
-        code: code,
+        code,
         courseCode: code,
-        room: room,
+        room,
         roomNo: room,
         subjectName: title,
-        title: title,
+        title,
         courseTitle: title || code
       })
     })
 
-    if (slots.length > 0) {
-      schedule.push({
-        day: dayName,
-        slots
-      })
-    }
+    if (slots.length > 0) schedule.push({ day: dayName, slots })
   })
 
-  // 3. Subject List with Faculty & Classrooms
   const subjects = []
   $('#tblSubjectList tr, table.subjectlist tr').each((i, row) => {
     const cells = $(row).find('td')
-    if (cells.length < 4 || $(cells[0]).hasClass('subheader') || $(cells[0]).hasClass('tableheader')) {
-      return
-    }
+    if (cells.length < 4 || $(cells[0]).hasClass('subheader') || $(cells[0]).hasClass('tableheader')) return
 
-    const code = $(cells[0]).text().replace(/\u00a0/g, '').trim()
-    const title = $(cells[1]).text().replace(/\u00a0/g, '').trim()
-    const ltpc = cells.length >= 5 ? $(cells[2]).text().replace(/\u00a0/g, '').trim() : ''
-    const faculty = cells.length >= 5 ? $(cells[3]).text().replace(/\u00a0/g, '').trim() : $(cells[2]).text().replace(/\u00a0/g, '').trim()
-    const room = cells.length >= 5 ? $(cells[4]).text().replace(/\u00a0/g, '').trim() : $(cells[3]).text().replace(/\u00a0/g, '').trim()
+    const wide = cells.length >= 5
+    const code = clean($(cells[0]).text())
+    const title = clean($(cells[1]).text())
+    const ltpc = wide ? clean($(cells[2]).text()) : ''
+    const faculty = wide ? clean($(cells[3]).text()) : clean($(cells[2]).text())
+    const room = wide ? clean($(cells[4]).text()) : clean($(cells[3]).text())
 
-    if (code && !code.toLowerCase().includes('code') && !code.toLowerCase().includes('subject') && !code.toLowerCase().includes('s.no')) {
+    const lowerCode = code.toLowerCase()
+    if (code && !lowerCode.includes('code') && !lowerCode.includes('subject') && !lowerCode.includes('s.no')) {
       subjects.push({
         code,
         courseCode: code,
@@ -214,164 +231,22 @@ export const parseTimetableData = (html) => {
     }
   })
 
-  return {
-    periods,
-    schedule,
-    subjects
-  }
+  return { periods, schedule, subjects }
 }
 
-// Creating a Tesseract worker loads the language model from disk,
-// which is slow. Doing that on every single login would make every
-// request pay that cost again — so we create it once, lazily, and
-// reuse the same worker for every captcha after that.
-let workerInstance = null
-
-export const getWorker = async () => {
-  if (!workerInstance) {
-    const worker = await createWorker('eng', 1, {
-      langPath: process.cwd(),
-      gzip: false,
-      parameters: {
-        load_system_dawg: '0',
-        load_freq_dawg: '0'
-      }
-    })
-    try {
-      await worker.setParameters({
-        tessedit_char_whitelist: '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ',
-        tessedit_pageseg_mode: '7' // Treat image as a single text line (PSM_SINGLE_LINE)
-      })
-    } catch (e) {
-      console.warn('Tesseract param config warning:', e.message)
-    }
-    workerInstance = worker
-  }
-  return workerInstance
-}
-
-const SRM_BASE_URL = 'https://student.srmap.edu.in/srmapstudentcorner/'
-
-export const fetchBinaryResource = async (client, url) => {
-  // The photo URL pulled from the dashboard page is often a relative
-  // path (e.g. "resources/photos/hash.jpg?rn=123"), not a full
-  // https:// URL. axios has no baseURL configured on this client, so
-  // a relative path here throws immediately. Resolving against SRM's
-  // own base URL first makes it work whether the source gave us a
-  // relative or already-absolute path.
-  const resolvedUrl = new URL(url, SRM_BASE_URL).href
-
-  const response = await client.get(resolvedUrl, { responseType: 'arraybuffer' })
-
-  return {
-    contentType: response.headers['content-type'] || 'image/jpeg',
-    imageBuffer: response.data
-  }
-}
-
-const DASHBOARD_URL = 'https://student.srmap.edu.in/srmapstudentcorner/HRDSystem'
-
-// The photo lives on the post-login dashboard page, not inside the
-// report fragment (studentreportresources.jsp) — those are two
-// separate pages SRM serves, so we fetch this one too, just to pull
-// the photo URL out of it.
-export const fetchStudentPhotoUrl = async (client) => {
-  const response = await client.get(DASHBOARD_URL)
-  const html = typeof response.data === 'string' ? response.data : ''
-  checkSessionExpiry(html)
-
-  const match = html.match(/src="([^"]*resources\/photos\/[^"]+)"/i)
-
-  return match ? match[1] : null
-}
-
-const ATTENDANCE_URL = 'https://student.srmap.edu.in/srmapstudentcorner/students/transaction/studentattendanceresources.jsp'
-
-// Fixed campus GPS coordinates (SRM AP Campus)
-const FIXED_LATITUDE = 16.464478869582308
-const FIXED_LONGITUDE = 80.50074625327288
-
-// Submits an attendance code with fixed campus coordinates
-// without requiring client-side geolocation.
-export const markAttendance = async (client, { acode, latitude = FIXED_LATITUDE, longitude = FIXED_LONGITUDE }) => {
-  const form = new URLSearchParams()
-  form.append('ids', '1')
-  form.append('acode', acode)
-  form.append('dynamiclatdata', String(latitude || FIXED_LATITUDE))
-  form.append('dynamiclonxdata', String(longitude || FIXED_LONGITUDE))
-
-  const response = await client.post(ATTENDANCE_URL, form.toString(), {
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-      'Accept': 'application/json, text/javascript, */*; q=0.01',
-      'X-Requested-With': 'XMLHttpRequest'
-    }
-  })
-
-  if (typeof response.data === 'string') {
-    checkSessionExpiry(response.data)
-  }
-
-  return response.data
-}
-
-// Fetches the logged-in student's internal studentId (needed by
-// the today's-attendance-status endpoint) from the post-login
-// dashboard page's hidden #studentId field.
-export const fetchId = async (client) => {
-  const response = await client.post(DASHBOARD_URL)
-  const html = typeof response.data === 'string' ? response.data : ''
-  checkSessionExpiry(html)
-
-  const $ = cheerio.load(html)
-  const studentId = $('#studentId').attr('value')
-  return studentId
-}
-
-const TODAY_ATTENDANCE_URL = 'https://student.srmap.edu.in/srmapstudentcorner/students/transaction/studentattendance.jsp'
-
-// Today's attendance status (ids=33) — a different endpoint/shape
-// than the subject-wise attendance report (ids=3 via fetchReport).
-// Unlike the other report endpoints, this one returns a full HTML
-// *page* (its own <head>/<script>), not a fragment, so it can't be
-// safely injected into our own DOM — parse it into clean JSON instead.
-export const fetchAtt = async (client, id) => {
-  const form = new URLSearchParams()
-  form.append('ids', 33)
-  form.append('studId', id)
-
-  const response = await client.post(TODAY_ATTENDANCE_URL, form.toString(), {
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'X-Requested-With': 'XMLHttpRequest',
-      'Accept': 'text/html, */*; q=0.01'
-    }
-  })
-
-  checkSessionExpiry(response.data)
-
-  return response.data
-}
-
-// Pulls the three sections out of the ids=33 page:
-// - dayOrder: today's day order label (e.g. "Wednesday")
-// - onlineAttendance: log lines of attendance codes already accepted today
-// - periods: today's hour-by-hour status rows (date, dayOrder, hour, subject, status)
 export const parseTodayAttendance = (html) => {
   const $ = cheerio.load(html || '')
 
-  const containers = $('.container-fluid')
   let dayOrder = ''
   const onlineAttendance = []
   const periods = []
 
-  containers.each((_, container) => {
+  $('.container-fluid').each((_, container) => {
     const $container = $(container)
     const heading = $container.find('.row').first().text().trim()
 
     if (/current attendance/i.test(heading)) {
-      const rows = $container.find('.row')
-      rows.each((__, row) => {
+      $container.find('.row').each((__, row) => {
         const cols = $(row).find('div[class*="col-"]')
         if (cols.length === 2 && $(cols[0]).text().trim().toLowerCase() === 'day order') {
           dayOrder = $(cols[1]).text().trim()
@@ -397,14 +272,11 @@ export const parseTodayAttendance = (html) => {
         if (cols.length !== 5) return
 
         const date = $(cols[0]).text().trim()
-        const rowDayOrder = $(cols[1]).text().trim()
-
-        // Skip the header row (labels instead of data)
         if (date.toLowerCase() === 'date') return
 
         periods.push({
           date,
-          dayOrder: rowDayOrder,
+          dayOrder: $(cols[1]).text().trim(),
           hour: $(cols[2]).text().trim(),
           subject: $(cols[3]).text().trim(),
           status: $(cols[4]).text().trim()
@@ -416,10 +288,166 @@ export const parseTodayAttendance = (html) => {
   return { dayOrder, onlineAttendance, periods }
 }
 
+/* --------------------------------------------------------------------------
+   OCR WORKER
+   FIX: the old version cached the *worker*, not the promise, so two logins
+   arriving together both saw null and each built a Tesseract worker. Every
+   duplicate loaded its own language model and never got freed.
+
+   FIX: langPath was process.cwd(), which differs between `npm start` at the
+   repo root and `npm start` inside backend/ — so whether OCR worked at all
+   depended on which directory you launched from.
+
+   FIX: the repo has no eng.traineddata, and hardcoding langPath to a local
+   directory made that a hard crash (ENOENT) rather than a recoverable miss.
+   tesseract.js only falls back to its jsdelivr CDN when langPath is left
+   UNSET, so we now set it only if a real local file is present. cachePath
+   makes the first download persist, so run one needs the network and every
+   run after it does not.
+
+   FIX: tesseract.js v7 does `throw Error(data)` from inside a MessagePort
+   event handler when a worker job rejects and no errorHandler was supplied
+   (node_modules/tesseract.js/src/createWorker.js:217). That throw escapes
+   every try/catch here and kills the process. Supplying errorHandler routes
+   the failure into our promise instead, so a missing or corrupt model is a
+   503 from /api/login rather than a crashed server.
+   -------------------------------------------------------------------------- */
+const TESSDATA_DIR = process.env.TESSDATA_PATH || path.resolve(__dirname, '../..')
+
+// tesseract.js reads/writes the *decompressed* model as `<dir>/eng.traineddata`.
+const localModelPath = path.join(TESSDATA_DIR, 'eng.traineddata')
+
+// FIX: with no local model AND an unreachable CDN, createWorker() never
+// settles — it just waits on the socket. Verified: a worker build with egress
+// blocked hung past 120s with no error. An unbounded wait here stalls the
+// login request behind it, so cap it and surface a 503 instead.
+const OCR_INIT_TIMEOUT_MS = Number(process.env.OCR_INIT_TIMEOUT_MS || 60_000)
+
+// FIX: when createWorker() fails, tesseract.js gives us no handle to the
+// worker thread it already spawned, so we cannot terminate it — and it keeps
+// the event loop alive. Verified: a bare script with a failed init never
+// exited. (server.js force-exits on shutdown, so this only leaks while
+// running.) Retrying on every login would therefore add a dead thread per
+// attempt and hammer the CDN, so hold a short cooldown and fail fast instead.
+const OCR_FAIL_COOLDOWN_MS = Number(process.env.OCR_FAIL_COOLDOWN_MS || 60_000)
+let lastOcrFailureAt = 0
+
+const hasLocalModel = () => {
+  try {
+    return fs.statSync(localModelPath).size > 0
+  } catch {
+    return false
+  }
+}
+
+let workerPromise = null
+
+export const getWorker = () => {
+  if (!workerPromise) {
+    const sinceFailure = Date.now() - lastOcrFailureAt
+
+    if (lastOcrFailureAt && sinceFailure < OCR_FAIL_COOLDOWN_MS) {
+      const wait = Math.ceil((OCR_FAIL_COOLDOWN_MS - sinceFailure) / 1000)
+      const e = new Error(
+        `OCR is unavailable (last init failed). Retrying in ${wait}s. ` +
+        `Place eng.traineddata at ${localModelPath} to fix this permanently.`
+      )
+      e.statusCode = 503
+      return Promise.reject(e)
+    }
+
+    workerPromise = (async () => {
+      const useLocal = hasLocalModel()
+
+      if (!useLocal) {
+        console.log(
+          `[ocr] no model at ${localModelPath} — downloading eng.traineddata ` +
+          `once from the tesseract.js CDN and caching it there. Drop the file ` +
+          `in yourself to skip the network entirely.`
+        )
+      }
+
+      const creating = createWorker('eng', 1, {
+        // Only pin langPath when the file really exists. Left unset,
+        // tesseract.js downloads from cdn.jsdelivr.net instead of throwing.
+        ...(useLocal ? { langPath: TESSDATA_DIR, gzip: false } : {}),
+        // Persist the model so only the first run touches the network.
+        cachePath: TESSDATA_DIR,
+        // Without this, a load failure throws from an event handler and
+        // takes the whole process down. See the FIX note above.
+        errorHandler: (err) => {
+          console.error('[ocr] tesseract worker error:', err?.message || err)
+        },
+        parameters: {
+          load_system_dawg: '0',
+          load_freq_dawg: '0'
+        }
+      })
+
+      let timedOut = false
+
+      // If we give up waiting, don't leak the worker that eventually arrives.
+      creating.then(
+        (w) => { if (timedOut) Promise.resolve(w.terminate()).catch(() => {}) },
+        () => {}
+      )
+
+      let timer
+      const worker = await Promise.race([
+        creating,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            timedOut = true
+            const e = new Error(
+              `OCR init timed out after ${OCR_INIT_TIMEOUT_MS}ms. ` +
+              (useLocal
+                ? `Model at ${localModelPath} may be corrupt.`
+                : `Could not reach the tesseract.js CDN — place eng.traineddata at ${localModelPath}.`)
+            )
+            e.statusCode = 503
+            reject(e)
+          }, OCR_INIT_TIMEOUT_MS)
+          timer.unref?.()
+        })
+      ]).finally(() => clearTimeout(timer))
+
+      try {
+        await worker.setParameters({
+          tessedit_char_whitelist: '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ',
+          tessedit_pageseg_mode: '7'
+        })
+      } catch (e) {
+        console.warn('Tesseract param config warning:', e.message)
+      }
+
+      lastOcrFailureAt = 0
+      return worker
+    })().catch((err) => {
+      // Don't cache a rejected promise — otherwise one cold-start failure
+      // permanently disables captcha solving for the process lifetime.
+      workerPromise = null
+      lastOcrFailureAt = Date.now()
+      throw err
+    })
+  }
+
+  return workerPromise
+}
+
+export const terminateWorker = async () => {
+  if (!workerPromise) return
+  try {
+    const worker = await workerPromise
+    await worker.terminate()
+  } catch {
+    /* already gone */
+  } finally {
+    workerPromise = null
+  }
+}
+
 export const solveCaptcha = async (client) => {
-  const captchaResponse = await client.get(CAPTCHA_URL, {
-    responseType: 'arraybuffer'
-  })
+  const captchaResponse = await client.get(CAPTCHA_URL, { responseType: 'arraybuffer' })
 
   const worker = await getWorker()
   const { data } = await worker.recognize(captchaResponse.data)
@@ -427,69 +455,98 @@ export const solveCaptcha = async (client) => {
   return data.text.replace(/[^a-zA-Z0-9]/g, '').trim()
 }
 
-const isLoginSuccessful = (html) => {
-  if (!html || typeof html !== 'string') {
-    return true
+/* --------------------------------------------------------------------------
+   SRM REQUESTS
+   -------------------------------------------------------------------------- */
+export const fetchBinaryResource = async (client, url) => {
+  const response = await client.get(resolveSrmUrl(url), { responseType: 'arraybuffer' })
+
+  return {
+    contentType: response.headers['content-type'] || 'image/jpeg',
+    imageBuffer: response.data
   }
-
-  const lower = html.toLowerCase()
-
-  // These only ever appear on the generic pre-login / landing page,
-  // never on real portal data — so their presence means we're still
-  // looking at an unauthenticated response, regardless of exact
-  // attribute quoting or casing in the login form itself.
-  const stillOnLandingPage =
-    lower.includes('developed by: firstline infotech') ||
-    lower.includes('enter application number') ||
-    lower.includes('enter captcha text') ||
-    lower.includes('freshers') ||
-    lower.includes('senior students') ||
-    lower.includes('txtusername') ||
-    lower.includes('txtauthkey')
-
-  const explicitError =
-    lower.includes('invalid captcha') ||
-    lower.includes('invalid username') ||
-    lower.includes('invalid password') ||
-    lower.includes('incorrect') ||
-    lower.includes('authentication failed')
-
-  return !stillOnLandingPage && !explicitError
 }
 
-export const submitLogin = async (client, { username, password, captchaCode }) => {
-  const form = new URLSearchParams()
-  form.append('ccode', captchaCode)
-  form.append('txtUserName', username)
-  form.append('txtAuthKey', password)
+export const fetchStudentPhotoUrl = async (client) => {
+  const response = await client.get(DASHBOARD_URL)
+  const html = typeof response.data === 'string' ? response.data : ''
+  checkSessionExpiry(html)
 
-  const loginResponse = await client.post(LOGIN_URL, form.toString(), {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+  const match = html.match(/src="([^"]*resources\/photos\/[^"]+)"/i)
+  return match ? match[1] : null
+}
+
+// Campus coordinates. Kept as the default so existing behaviour is unchanged,
+// but overridable via ATTENDANCE_LATITUDE / ATTENDANCE_LONGITUDE so the value
+// is a deployment decision rather than a hard-coded constant in a route.
+const DEFAULT_LATITUDE = 16.464478869582308
+const DEFAULT_LONGITUDE = 80.50074625327288
+
+const coord = (value, fallback) => {
+  const parsed = typeof value === 'number' ? value : parseFloat(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+export const markAttendance = async (client, { acode, latitude, longitude } = {}) => {
+  // Guard against String(undefined) === 'undefined' reaching SRM when the env
+  // vars are unset.
+  const lat = coord(latitude, coord(process.env.ATTENDANCE_LATITUDE, DEFAULT_LATITUDE))
+  const lon = coord(longitude, coord(process.env.ATTENDANCE_LONGITUDE, DEFAULT_LONGITUDE))
+
+  const form = new URLSearchParams()
+  form.append('ids', '1')
+  form.append('acode', acode)
+  form.append('dynamiclatdata', String(lat))
+  form.append('dynamiclonxdata', String(lon))
+
+  const response = await client.post(ATTENDANCE_URL, form.toString(), {
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      Accept: 'application/json, text/javascript, */*; q=0.01',
+      'X-Requested-With': 'XMLHttpRequest'
+    }
   })
 
-  let finalHtml = typeof loginResponse.data === 'string' ? loginResponse.data : ''
-  let finalStatus = loginResponse.status
+  if (typeof response.data === 'string') checkSessionExpiry(response.data)
 
-  const isRedirect =
-    loginResponse.status >= 300 &&
-    loginResponse.status < 400 &&
-    loginResponse.headers.location
-
-  if (isRedirect) {
-    const redirectUrl = new URL(loginResponse.headers.location, LOGIN_URL).href
-    const portalResponse = await client.get(redirectUrl)
-
-    finalHtml = typeof portalResponse.data === 'string' ? portalResponse.data : ''
-    finalStatus = portalResponse.status
-  }
-
-  const success = finalStatus >= 200 && finalStatus < 300 && isLoginSuccessful(finalHtml)
-
-  return { success, status: finalStatus }
+  return response.data
 }
 
-// Shared by /profile and /timetable — same SRM endpoint, only the
-// "ids" value differs, so there's no reason to duplicate this logic.
+// FIX: takes the session, not just the client, so the scraped studentId is
+// remembered. /api/att used to re-download the whole dashboard page on every
+// poll just to read one hidden input.
+export const fetchId = async (session) => {
+  const client = session.client ?? session
+
+  if (session.studentId) return session.studentId
+
+  const response = await client.post(DASHBOARD_URL)
+  const html = typeof response.data === 'string' ? response.data : ''
+  checkSessionExpiry(html)
+
+  const studentId = cheerio.load(html)('#studentId').attr('value')
+  if (studentId && session.client) session.studentId = studentId
+
+  return studentId
+}
+
+export const fetchAtt = async (client, id) => {
+  const form = new URLSearchParams()
+  form.append('ids', '33')
+  form.append('studId', id)
+
+  const response = await client.post(TODAY_ATTENDANCE_URL, form.toString(), {
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'X-Requested-With': 'XMLHttpRequest',
+      Accept: 'text/html, */*; q=0.01'
+    }
+  })
+
+  checkSessionExpiry(response.data)
+  return response.data
+}
+
 export const fetchReport = async (client, ids) => {
   const form = new URLSearchParams()
   form.append('ids', ids)
@@ -498,11 +555,37 @@ export const fetchReport = async (client, ids) => {
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
       'X-Requested-With': 'XMLHttpRequest',
-      'Accept': 'text/html, */*; q=0.01'
+      Accept: 'text/html, */*; q=0.01'
     }
   })
 
   checkSessionExpiry(response.data)
-
   return response.data
+}
+
+// FIX: only one redirect hop was followed. SRM chains Location headers on
+// some login paths, which showed up as a random "invalid credentials".
+export const submitLogin = async (client, { username, password, captchaCode }) => {
+  const form = new URLSearchParams()
+  form.append('ccode', captchaCode)
+  form.append('txtUserName', username)
+  form.append('txtAuthKey', password)
+
+  let response = await client.post(LOGIN_URL, form.toString(), {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+  })
+
+  let currentUrl = LOGIN_URL
+  let hops = 0
+
+  while (response.status >= 300 && response.status < 400 && response.headers.location && hops < 5) {
+    currentUrl = new URL(response.headers.location, currentUrl).href
+    response = await client.get(currentUrl)
+    hops += 1
+  }
+
+  const finalHtml = typeof response.data === 'string' ? response.data : ''
+  const success = response.status >= 200 && response.status < 300 && isLoginSuccessful(finalHtml)
+
+  return { success, status: response.status }
 }
