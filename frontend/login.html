@@ -5077,7 +5077,7 @@ function hideProfileSwitchPopup() {
       if (!isDragging || !radialOpen) return;
       const deltaY = clientY - startY;
       // Convert vertical drag delta to angular rotation (0.42 degrees per pixel)
-      targetScrollAngle = startAngle + deltaY * 0.42;
+      targetScrollAngle = startAngle - deltaY * 0.42;
       targetScrollAngle = Math.max(-85, Math.min(85, targetScrollAngle));
     };
 
@@ -5089,21 +5089,32 @@ function hideProfileSwitchPopup() {
       if (!radialOpen) return;
       e.preventDefault();
       // Map mouse-wheel scrolls smoothly into dial rotation
-      targetScrollAngle += e.deltaY * 0.12;
+      targetScrollAngle -= e.deltaY * 0.12;
       targetScrollAngle = Math.max(-85, Math.min(85, targetScrollAngle));
     }, { passive: false });
 
     radialMenu.addEventListener('touchstart', (e) => {
       handleDragStart(e.touches[0].clientY);
-    }, { passive: true });
+    }, { passive: false });
 
     radialMenu.addEventListener('touchmove', (e) => {
+      if (isDragging && radialOpen) {
+        e.preventDefault();
+      }
       handleDragMove(e.touches[0].clientY);
-    }, { passive: true });
+    }, { passive: false });
 
     radialMenu.addEventListener('touchend', () => {
       handleDragEnd();
     });
+
+    radialBackdrop.addEventListener('touchmove', (e) => {
+      if (radialOpen) e.preventDefault();
+    }, { passive: false });
+
+    radialBackdrop.addEventListener('wheel', (e) => {
+      if (radialOpen) e.preventDefault();
+    }, { passive: false });
 
     radialMenu.addEventListener('mousedown', (e) => {
       handleDragStart(e.clientY);
