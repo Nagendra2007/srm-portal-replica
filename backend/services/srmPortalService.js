@@ -19,7 +19,9 @@ const TODAY_ATTENDANCE_URL = `${SRM_BASE_URL}students/transaction/studentattenda
 export const REPORT_IDS = {
   profile: '1',
   timetable: '10',
-  attendance: '3'
+  attendance: '3',
+  internalMarks: '5',
+  currentSemesterResults: '15'
 }
 
 const MIN_ATTENDANCE_PERCENT = 75
@@ -120,6 +122,111 @@ export const parseAttendance = (html) => {
 }
 
 const clean = (text) => text.replace(/\u00a0/g, '').trim()
+
+/* --------------------------------------------------------------------------
+   INTERNAL MARKS (report id 5)
+   Top-level table has one row per subject (code, description, marks
+   obtained, max marks). Clicking a row toggles a hidden `#subject<N>` div
+   right below it with the component-wise breakdown (Mid Sem, CLA 1-3, Lab
+   Performance, etc). `<N>` is just the subject's position in the table, so
+   we can pair each row with its breakdown div by index instead of relying
+   on any id/name matching.
+   -------------------------------------------------------------------------- */
+export const parseInternalMarks = (html) => {
+  if (!html) return []
+  const $ = cheerio.load(html)
+  const subjects = []
+
+  $('tbody tr.table-striped').each((i, row) => {
+    const cells = $(row).find('td')
+    if (cells.length < 4) return
+
+    const code = clean($(cells[0]).text())
+    const description = clean($(cells[1]).text())
+    const marksObtainedRaw = clean($(cells[2]).text())
+    const maxMarksRaw = clean($(cells[3]).text())
+
+    if (!code) return
+
+    const marksObtained = parseFloat(marksObtainedRaw)
+    const maxMarks = parseFloat(maxMarksRaw)
+
+    const components = []
+    // First row of the breakdown table is just the "Name / Conducted /
+    // Converted" header — skip it.
+    $(`#subject${i} table tr`).slice(1).each((_, compRow) => {
+      const compCells = $(compRow).find('td')
+      if (compCells.length < 3) return
+
+      const name = clean($(compCells[0]).text())
+      if (!name) return
+
+      const conducted = clean($(compCells[1]).text())
+      const converted = clean($(compCells[2]).text())
+
+      components.push({
+        name,
+        conducted: conducted || null,
+        converted: converted || null
+      })
+    })
+
+    subjects.push({
+      code,
+      description,
+      marksObtained: Number.isNaN(marksObtained) ? null : marksObtained,
+      maxMarks: Number.isNaN(maxMarks) ? null : maxMarks,
+      components
+    })
+  })
+
+  return subjects
+}
+
+/* --------------------------------------------------------------------------
+   CURRENT SEMESTER RESULTS (report id 15)
+   One row per subject (semester, code, description, credit, grade, result),
+   plus a trailing S.G.P.A summary row. We deliberately drop the disclaimer
+   row (it's the one <td colspan="6"> cell with no real data in it).
+   -------------------------------------------------------------------------- */
+export const parseCurrentSemesterResults = (html) => {
+  if (!html) return { title: '', subjects: [], sgpa: null }
+  const $ = cheerio.load(html)
+
+  const title = clean($('table thead th[colspan="6"]').first().text())
+
+  const subjects = []
+  let sgpa = null
+
+  $('table tbody tr').each((_, row) => {
+    const cells = $(row).find('td')
+
+    if (cells.length === 6) {
+      const semester = clean($(cells[0]).text())
+      const code = clean($(cells[1]).text())
+      const description = clean($(cells[2]).text())
+      const credit = clean($(cells[3]).text())
+      const grade = clean($(cells[4]).text())
+      const result = clean($(cells[5]).text())
+
+      if (!code) return
+      subjects.push({ semester, code, description, credit, grade, result })
+      return
+    }
+
+    // S.G.P.A row is 2 <td>s: label, value. Disclaimer row is a single
+    // colspan="6" cell — neither has 6 cells, so both land here, and only
+    // the S.G.P.A one matches the label check.
+    if (cells.length === 2) {
+      const label = clean($(cells[0]).text())
+      if (/S\.?G\.?P\.?A/i.test(label)) {
+        sgpa = clean($(cells[1]).text())
+      }
+    }
+  })
+
+  return { title, subjects, sgpa }
+}
 
 export const parseTimetableData = (html) => {
   if (!html) return { periods: [], schedule: [], subjects: [] }
