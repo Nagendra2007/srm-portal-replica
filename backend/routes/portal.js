@@ -7,6 +7,8 @@ import {
   fetchStudentPhotoUrl,
   parseAttendance,
   parseTimetableData,
+  parseInternalMarks,
+  parseCurrentSemesterResults,
   markAttendance,
   fetchId,
   fetchAtt,
@@ -68,6 +70,34 @@ const getAttendanceData = async (session) => {
   const parsed = parseAttendance(html) || []
 
   if (registrationNumber) saveReportCache(registrationNumber, 'attendance', parsed)
+
+  return parsed
+}
+
+const getInternalMarksData = async (session) => {
+  const registrationNumber = session.username
+
+  const cached = registrationNumber ? getCachedReport(registrationNumber, 'internalMarks') : null
+  if (cached) return cached
+
+  const html = await fetchReport(session.client, REPORT_IDS.internalMarks)
+  const parsed = parseInternalMarks(html) || []
+
+  if (registrationNumber) saveReportCache(registrationNumber, 'internalMarks', parsed)
+
+  return parsed
+}
+
+const getCurrentSemesterResultsData = async (session) => {
+  const registrationNumber = session.username
+
+  const cached = registrationNumber ? getCachedReport(registrationNumber, 'currentSemesterResults') : null
+  if (cached) return cached
+
+  const html = await fetchReport(session.client, REPORT_IDS.currentSemesterResults)
+  const parsed = parseCurrentSemesterResults(html) || { title: '', subjects: [], sgpa: null }
+
+  if (registrationNumber) saveReportCache(registrationNumber, 'currentSemesterResults', parsed)
 
   return parsed
 }
@@ -143,6 +173,30 @@ router.get('/attendance', async (req, res) => {
     res.json(await getAttendanceData(session))
   } catch (error) {
     handleRouteError(res, error, 'Failed to fetch attendance')
+  }
+})
+
+router.get('/internal-marks', async (req, res) => {
+  const session = requireSession(req, res)
+  if (!session) return
+
+  try {
+    noStore(res)
+    res.json(await getInternalMarksData(session))
+  } catch (error) {
+    handleRouteError(res, error, 'Failed to fetch internal marks')
+  }
+})
+
+router.get('/current-semester-results', async (req, res) => {
+  const session = requireSession(req, res)
+  if (!session) return
+
+  try {
+    noStore(res)
+    res.json(await getCurrentSemesterResultsData(session))
+  } catch (error) {
+    handleRouteError(res, error, 'Failed to fetch current semester results')
   }
 })
 
