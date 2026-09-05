@@ -1240,53 +1240,6 @@
     color: var(--ink-muted);
   }
 
-  /* Current semester results table */
-  .results-row {
-    display: grid;
-    grid-template-columns: 90px 2.4fr 70px 70px 90px;
-    align-items: center;
-  }
-
-  .results-row + .results-row {
-    border-top: 1px solid var(--paper-line);
-  }
-
-  .results-row.header {
-    background: var(--stat-box-bg);
-  }
-
-  .results-cell {
-    font-family: 'IBM Plex Mono', monospace;
-    padding: 8px 10px;
-  }
-
-  .results-row.header .results-cell {
-    font-size: 9px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--ink-muted);
-  }
-
-  .results-row:not(.header) .results-cell {
-    font-size: 12px;
-    color: var(--ink);
-  }
-
-  .results-row:not(.header) .results-cell:nth-child(2) {
-    font-weight: 600;
-  }
-
-  .results-cell.centered {
-    text-align: center;
-    color: var(--ink-muted);
-  }
-
-  .results-cell.grade-pass {
-    color: var(--good-green);
-    font-weight: 700;
-  }
-
   /* ==========================================================================
      LIVE MARK ATTENDANCE VIEW
      ========================================================================== */
@@ -3470,15 +3423,29 @@ function hideProfileSwitchPopup() {
 
       currentResultsSgpaBadge.textContent = data.sgpa ? `SGPA: ${data.sgpa}` : 'SGPA';
 
-      const rowsHtml = subjects.map((s) => {
+      // Cards instead of a 5-column table — a fixed-width row (Code /
+      // Description / Credit / Grade / Result) doesn't fit a phone screen
+      // without pushing the last column off-canvas. This reuses the same
+      // subject-card/stat-box pattern the Attendance panel already uses,
+      // which is proven to wrap properly at any width.
+      const cardsHtml = subjects.map((s) => {
         const isPass = /pass/i.test(s.result || '');
         return `
-          <div class="results-row">
-            <div class="results-cell centered">${esc(s.code)}</div>
-            <div class="results-cell">${esc(s.description)}</div>
-            <div class="results-cell centered">${esc(s.credit)}</div>
-            <div class="results-cell centered">${esc(s.grade)}</div>
-            <div class="results-cell centered ${isPass ? 'grade-pass' : ''}">${esc(s.result)}</div>
+          <div class="subject-card">
+            <div class="subject-card-header">
+              <span class="subject-name">${esc(s.code)} \u2014 ${esc(s.description)}</span>
+              <span class="subject-percent ${isPass ? 'good' : 'low'}">${esc(s.grade)}</span>
+            </div>
+            <div class="subject-stats" style="grid-template-columns:repeat(2,1fr)">
+              <div class="stat-box">
+                <div class="stat-label">Credit</div>
+                <div class="stat-value">${esc(s.credit)}</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">Result</div>
+                <div class="stat-value ${isPass ? 'present' : 'absent'}">${esc(s.result)}</div>
+              </div>
+            </div>
           </div>
         `;
       }).join('');
@@ -3497,18 +3464,7 @@ function hideProfileSwitchPopup() {
         ? `<p style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;">${esc(data.title)}</p>`
         : '';
 
-      currentResultsContent.innerHTML = cacheIndicator + titleHtml + `
-        <div class="marks-breakdown-table">
-          <div class="results-row header">
-            <div class="results-cell centered">Code</div>
-            <div class="results-cell">Description</div>
-            <div class="results-cell centered">Credit</div>
-            <div class="results-cell centered">Grade</div>
-            <div class="results-cell centered">Result</div>
-          </div>
-          ${rowsHtml}
-        </div>
-      `;
+      currentResultsContent.innerHTML = cacheIndicator + titleHtml + `<div class="attendance-grid">${cardsHtml}</div>`;
     };
 
     /* --------------------------------------------------------------------------
