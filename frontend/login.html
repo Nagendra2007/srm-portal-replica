@@ -1192,6 +1192,101 @@
     color: var(--low-red);
   }
 
+  /* Internal marks — component-wise breakdown table */
+  .marks-breakdown-table {
+    border: 1px solid var(--paper-line);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .marks-breakdown-row {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr;
+    align-items: center;
+  }
+
+  .marks-breakdown-row + .marks-breakdown-row {
+    border-top: 1px solid var(--paper-line);
+  }
+
+  .marks-breakdown-row.header {
+    background: var(--stat-box-bg);
+  }
+
+  .marks-breakdown-cell {
+    font-family: 'IBM Plex Mono', monospace;
+    padding: 8px 10px;
+  }
+
+  .marks-breakdown-row.header .marks-breakdown-cell {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ink-muted);
+  }
+
+  .marks-breakdown-row:not(.header) .marks-breakdown-cell {
+    font-size: 12px;
+    color: var(--ink);
+  }
+
+  .marks-breakdown-row:not(.header) .marks-breakdown-cell:first-child {
+    font-weight: 600;
+  }
+
+  .marks-breakdown-cell.numeric {
+    text-align: right;
+    color: var(--ink-muted);
+  }
+
+  /* Current semester results table */
+  .results-row {
+    display: grid;
+    grid-template-columns: 90px 2.4fr 70px 70px 90px;
+    align-items: center;
+  }
+
+  .results-row + .results-row {
+    border-top: 1px solid var(--paper-line);
+  }
+
+  .results-row.header {
+    background: var(--stat-box-bg);
+  }
+
+  .results-cell {
+    font-family: 'IBM Plex Mono', monospace;
+    padding: 8px 10px;
+  }
+
+  .results-row.header .results-cell {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ink-muted);
+  }
+
+  .results-row:not(.header) .results-cell {
+    font-size: 12px;
+    color: var(--ink);
+  }
+
+  .results-row:not(.header) .results-cell:nth-child(2) {
+    font-weight: 600;
+  }
+
+  .results-cell.centered {
+    text-align: center;
+    color: var(--ink-muted);
+  }
+
+  .results-cell.grade-pass {
+    color: var(--good-green);
+    font-weight: 700;
+  }
+
   /* ==========================================================================
      LIVE MARK ATTENDANCE VIEW
      ========================================================================== */
@@ -2327,6 +2422,14 @@ body.session-expired-active > *:not(#sessionExpiredOverlay){
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
           Attendance
         </button>
+        <button class="menu-item" data-action="internalMarks" type="button">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11H3v10h6z"/><path d="M15 5H9v16h6z"/><path d="M21 3h-6v18h6z"/></svg>
+          Internal Marks
+        </button>
+        <button class="menu-item" data-action="currentResults" type="button">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15l-4-4h8z"/><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8h8"/></svg>
+          Current Semester Results
+        </button>
         <button class="menu-item" data-action="markAttendance" type="button">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
           Mark Attendance
@@ -2531,6 +2634,30 @@ body.session-expired-active > *:not(#sessionExpiredOverlay){
         <span class="panel-badge">Current Term</span>
       </div>
       <div id="attendanceContent"></div>
+    </section>
+
+    <!-- 5b. INTERNAL MARKS PANEL -->
+    <section id="internalMarksSection" class="profile-panel">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Continuous Assessment</p>
+          <h2>Internal Marks</h2>
+        </div>
+        <span class="panel-badge">Current Term</span>
+      </div>
+      <div id="internalMarksContent"></div>
+    </section>
+
+    <!-- 5c. CURRENT SEMESTER RESULTS PANEL -->
+    <section id="currentResultsSection" class="profile-panel">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Examination Results</p>
+          <h2>Current Semester Results</h2>
+        </div>
+        <span class="panel-badge" id="currentResultsSgpaBadge">SGPA</span>
+      </div>
+      <div id="currentResultsContent"></div>
     </section>
 
     <!-- 6. LIVE MARK ATTENDANCE PANEL -->
@@ -2807,6 +2934,13 @@ function hideProfileSwitchPopup() {
     const coursesCountBadge = document.getElementById('coursesCountBadge');
     const courseSearchInput = document.getElementById('courseSearchInput');
 
+    const internalMarksSection = document.getElementById('internalMarksSection');
+    const internalMarksContent = document.getElementById('internalMarksContent');
+
+    const currentResultsSection = document.getElementById('currentResultsSection');
+    const currentResultsContent = document.getElementById('currentResultsContent');
+    const currentResultsSgpaBadge = document.getElementById('currentResultsSgpaBadge');
+
     let currentTimetableData = null;
     let currentCoursesList = [];
     let activeDayFilter = 'TODAY';
@@ -2817,6 +2951,8 @@ function hideProfileSwitchPopup() {
       coursesSection.style.display = 'none';
       attendanceSection.style.display = 'none';
       markAttendanceSection.style.display = 'none';
+      internalMarksSection.style.display = 'none';
+      currentResultsSection.style.display = 'none';
       if (activeSec) activeSec.style.display = 'block';
     };
 
@@ -3245,6 +3381,137 @@ function hideProfileSwitchPopup() {
     };
 
     /* --------------------------------------------------------------------------
+       6b. INTERNAL MARKS RENDERER
+       Each subject card is clickable, same as SRM's own row-click behaviour
+       (funShowHideDetails), and expands to show the component-wise
+       breakdown (Mid Sem, CLA 1-3, Lab Performance, etc). Marks are often
+       blank until SRM actually enters them, so blank cells show as an
+       em-dash rather than "undefined" or "0".
+       -------------------------------------------------------------------------- */
+    const renderInternalMarks = (subjects) => {
+      if (!subjects || subjects.length === 0) {
+        internalMarksContent.innerHTML = '<p style="font-family:\'IBM Plex Mono\',monospace;font-size:13px;color:var(--ink-muted);text-align:center;padding:20px;">No internal marks data found.</p>';
+        return;
+      }
+
+      const cardsHtml = subjects.map((subject, i) => {
+        const hasMarks = subject.marksObtained !== null && subject.maxMarks !== null;
+        const scoreText = hasMarks ? `${subject.marksObtained} / ${subject.maxMarks}` : 'Not Entered';
+
+        const componentsHtml = (subject.components || []).map((c) => `
+          <div class="marks-breakdown-row">
+            <div class="marks-breakdown-cell">${esc(c.name)}</div>
+            <div class="marks-breakdown-cell numeric">${esc(c.conducted ?? '\u2014')}</div>
+            <div class="marks-breakdown-cell numeric">${esc(c.converted ?? '\u2014')}</div>
+          </div>
+        `).join('');
+
+        const breakdownTableHtml = componentsHtml
+          ? `
+            <div class="marks-breakdown-table">
+              <div class="marks-breakdown-row header">
+                <div class="marks-breakdown-cell">Component</div>
+                <div class="marks-breakdown-cell numeric">Conducted</div>
+                <div class="marks-breakdown-cell numeric">Converted</div>
+              </div>
+              ${componentsHtml}
+            </div>
+          `
+          : '<p style="font-family:\'IBM Plex Mono\',monospace;font-size:12px;color:var(--ink-muted);">No component-wise breakdown available.</p>';
+
+        return `
+          <div class="subject-card internal-marks-card" data-marks-index="${i}" style="cursor:pointer">
+            <div class="subject-card-header">
+              <span class="subject-name">${esc(subject.code)} \u2014 ${esc(subject.description)}</span>
+              <span class="subject-percent ${hasMarks ? 'good' : 'low'}">${scoreText}</span>
+            </div>
+            <div class="internal-marks-breakdown" id="internalMarksBreakdown${i}" style="display:none;margin-top:10px">
+              ${breakdownTableHtml}
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      let cacheIndicator = '';
+      if (subjects.isCached) {
+        cacheIndicator = `
+          <div style="margin-bottom:12px;padding:8px 12px;background:var(--stamp-glow, rgba(225,29,72,0.05));border:1px dashed var(--header-border);border-radius:6px;display:flex;align-items:center;gap:8px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-muted);">
+            <span style="display:inline-block;width:6px;height:6px;background:var(--stamp-red, #e11d48);border-radius:50%;"></span>
+            <span>[Last-Known Cached Data]</span>
+          </div>
+        `;
+      }
+
+      internalMarksContent.innerHTML = cacheIndicator + `<div class="attendance-grid">${cardsHtml}</div>`;
+    };
+
+    internalMarksContent.addEventListener('click', (e) => {
+      const card = e.target.closest('.internal-marks-card');
+      if (!card) return;
+      const breakdown = document.getElementById(`internalMarksBreakdown${card.dataset.marksIndex}`);
+      if (!breakdown) return;
+      breakdown.style.display = breakdown.style.display === 'none' ? 'block' : 'none';
+    });
+
+    /* --------------------------------------------------------------------------
+       6c. CURRENT SEMESTER RESULTS RENDERER
+       Straight tabular data (semester, code, description, credit, grade,
+       result) plus a trailing S.G.P.A figure. The disclaimer paragraph SRM
+       ships with this report is intentionally dropped by the parser.
+       -------------------------------------------------------------------------- */
+    const renderCurrentResults = (data) => {
+      const subjects = data && data.subjects;
+
+      if (!subjects || subjects.length === 0) {
+        currentResultsSgpaBadge.textContent = 'SGPA';
+        currentResultsContent.innerHTML = '<p style="font-family:\'IBM Plex Mono\',monospace;font-size:13px;color:var(--ink-muted);text-align:center;padding:20px;">No results published yet.</p>';
+        return;
+      }
+
+      currentResultsSgpaBadge.textContent = data.sgpa ? `SGPA: ${data.sgpa}` : 'SGPA';
+
+      const rowsHtml = subjects.map((s) => {
+        const isPass = /pass/i.test(s.result || '');
+        return `
+          <div class="results-row">
+            <div class="results-cell centered">${esc(s.code)}</div>
+            <div class="results-cell">${esc(s.description)}</div>
+            <div class="results-cell centered">${esc(s.credit)}</div>
+            <div class="results-cell centered">${esc(s.grade)}</div>
+            <div class="results-cell centered ${isPass ? 'grade-pass' : ''}">${esc(s.result)}</div>
+          </div>
+        `;
+      }).join('');
+
+      let cacheIndicator = '';
+      if (data.isCached) {
+        cacheIndicator = `
+          <div style="margin-bottom:12px;padding:8px 12px;background:var(--stamp-glow, rgba(225,29,72,0.05));border:1px dashed var(--header-border);border-radius:6px;display:flex;align-items:center;gap:8px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-muted);">
+            <span style="display:inline-block;width:6px;height:6px;background:var(--stamp-red, #e11d48);border-radius:50%;"></span>
+            <span>[Last-Known Cached Data]</span>
+          </div>
+        `;
+      }
+
+      const titleHtml = data.title
+        ? `<p style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:10px;">${esc(data.title)}</p>`
+        : '';
+
+      currentResultsContent.innerHTML = cacheIndicator + titleHtml + `
+        <div class="marks-breakdown-table">
+          <div class="results-row header">
+            <div class="results-cell centered">Code</div>
+            <div class="results-cell">Description</div>
+            <div class="results-cell centered">Credit</div>
+            <div class="results-cell centered">Grade</div>
+            <div class="results-cell centered">Result</div>
+          </div>
+          ${rowsHtml}
+        </div>
+      `;
+    };
+
+    /* --------------------------------------------------------------------------
        6. TIMETABLE RENDERER & DAY SELECTION
        -------------------------------------------------------------------------- */
     const getTodayDayName = (schedule = []) => {
@@ -3480,6 +3747,8 @@ function hideProfileSwitchPopup() {
        8. ASYNC DATA FETCHING & ULTRA-FAST SWR CACHE ENGINE
        -------------------------------------------------------------------------- */
     let currentAttendanceList = null;
+    let currentInternalMarksList = null;
+    let currentResultsData = null;
 
     // Fast local storage cache helpers
     const CACHE_TTL_MS = 30 * 60 * 1000; // 30 mins
@@ -3517,6 +3786,14 @@ function hideProfileSwitchPopup() {
       if (cachedAttendance) {
         currentAttendanceList = cachedAttendance;
       }
+      const cachedInternalMarks = readLocalCache(`internalMarks:${username}`);
+      if (cachedInternalMarks) {
+        currentInternalMarksList = cachedInternalMarks;
+      }
+      const cachedResults = readLocalCache(`currentResults:${username}`);
+      if (cachedResults) {
+        currentResultsData = cachedResults;
+      }
     };
 
     const showSessionExpiredPopup = () => {
@@ -3542,19 +3819,76 @@ function hideProfileSwitchPopup() {
       }
     };
 
+    // Setup Session Expiration action button listener
+    const sessionExpiredBtn = document.getElementById('sessionExpiredBtn');
+    const sessionExpiredLogoutBtn = document.getElementById('sessionExpiredLogoutBtn');
+
+    /* --------------------------------------------------------------------------
+       SRM's own upstream session can — and does — expire well before our
+       30-minute local session TTL (clientSessionStore.js) runs out. Every
+       route that touches SRM already surfaces that as a 401 (see
+       handleRouteError in portal.js), so a 401 here doesn't only mean our
+       local session died of old age; most of the time it means SRM logged us
+       out early and we still have a perfectly good saved password.
+
+       reconnectSession() is the single place that re-authenticates. It's
+       shared by the manual "Initiate New Session" button AND by
+       checkResponseAuth below, which now calls it automatically the instant
+       any request gets a 401 — instead of just showing the popup and
+       waiting for a click. If several panels 401 around the same time
+       (bootstrap + attendance + courses firing together), they all await
+       the same in-flight attempt instead of each starting its own login.
+       -------------------------------------------------------------------------- */
+    let reconnectInFlight = null;
+
+    const reconnectSession = () => {
+      if (reconnectInFlight) return reconnectInFlight;
+
+      reconnectInFlight = (async () => {
+        const username = inMemoryUsername || localStorage.getItem('username') || sessionStorage.getItem('username');
+        const password = inMemoryPassword || localStorage.getItem('password') || sessionStorage.getItem('password');
+
+        if (!username || !password) {
+          throw new Error('Saved credentials not found. Please log in again.');
+        }
+
+        // Reset the active session and re-execute login
+        sessionId = null;
+        await performLogin(username, password, { remember: true });
+
+        // Re-load current dashboard with new active session
+        preloadAllPortalData(username);
+      })();
+
+      return reconnectInFlight.finally(() => { reconnectInFlight = null; });
+    };
+
     const checkResponseAuth = async (res) => {
       if (res.status === 401) {
-        if (sessionId) {
-          showSessionExpiredPopup();
+        if (!sessionId) return false;
+
+        showSessionExpiredPopup();
+
+        try {
+          await reconnectSession();
+          hideSessionExpiredPopup();
+        } catch (err) {
+          const msgEl = document.getElementById('sessionExpiredMessage');
+          if (msgEl) {
+            msgEl.textContent = `Reconnection failed: ${err.message || 'Verification failed'}. Please check your connection or log out and sign in again.`;
+            msgEl.style.color = 'var(--stamp-red)';
+          }
+          // Popup stays up with the manual button as a fallback.
         }
+
+        // The response that triggered this was still a 401 — the caller's
+        // current fetch has no data to use. It should treat this pass as
+        // failed and rely on the next natural refresh (or its own retry)
+        // now that the session behind it is healthy again.
         return false;
       }
       return true;
     };
-
-    // Setup Session Expiration action button listener
-    const sessionExpiredBtn = document.getElementById('sessionExpiredBtn');
-    const sessionExpiredLogoutBtn = document.getElementById('sessionExpiredLogoutBtn');
 
     if (sessionExpiredBtn) {
       sessionExpiredBtn.addEventListener('click', async () => {
@@ -3562,21 +3896,7 @@ function hideProfileSwitchPopup() {
         sessionExpiredBtn.textContent = 'Reconnecting...';
 
         try {
-          const username = inMemoryUsername || localStorage.getItem('username') || sessionStorage.getItem('username');
-          const password = inMemoryPassword || localStorage.getItem('password') || sessionStorage.getItem('password');
-
-          if (!username || !password) {
-            throw new Error('Saved credentials not found. Please log in again.');
-          }
-
-          // Reset the active session and re-execute login
-          sessionId = null;
-          await performLogin(username, password, { remember: true });
-          
-          // Re-load current dashboard with new active session
-          preloadAllPortalData(username);
-
-          // Success! Hide popup
+          await reconnectSession();
           hideSessionExpiredPopup();
         } catch (err) {
           const msgEl = document.getElementById('sessionExpiredMessage');
@@ -3675,6 +3995,58 @@ function hideProfileSwitchPopup() {
         }
         if (u) writeLocalCache(`timetable:${u}`, data);
         return currentTimetableData;
+      } catch (err) {
+        // DO NOT return demo/fake data.
+        throw err;
+      }
+    };
+
+    const ensureInternalMarksData = async (username) => {
+      const u = username || localStorage.getItem('username') || sessionStorage.getItem('username') || '';
+      if (currentInternalMarksList && currentInternalMarksList.length > 0) {
+        return currentInternalMarksList;
+      }
+      const cached = readLocalCache(`internalMarks:${u}`);
+      if (cached) {
+        currentInternalMarksList = cached;
+        return currentInternalMarksList;
+      }
+      try {
+        const res = await fetch(`${API_BASE}/api/internal-marks`, {
+          headers: { 'X-Client-Session': sessionId }
+        });
+        if (!await checkResponseAuth(res)) throw new Error('Session expired');
+        if (!res.ok) throw new Error('Internal marks error');
+        const subjects = await res.json();
+        currentInternalMarksList = subjects;
+        if (u) writeLocalCache(`internalMarks:${u}`, subjects);
+        return currentInternalMarksList;
+      } catch (err) {
+        // DO NOT return demo/fake data.
+        throw err;
+      }
+    };
+
+    const ensureCurrentResultsData = async (username) => {
+      const u = username || localStorage.getItem('username') || sessionStorage.getItem('username') || '';
+      if (currentResultsData && currentResultsData.subjects && currentResultsData.subjects.length > 0) {
+        return currentResultsData;
+      }
+      const cached = readLocalCache(`currentResults:${u}`);
+      if (cached) {
+        currentResultsData = cached;
+        return currentResultsData;
+      }
+      try {
+        const res = await fetch(`${API_BASE}/api/current-semester-results`, {
+          headers: { 'X-Client-Session': sessionId }
+        });
+        if (!await checkResponseAuth(res)) throw new Error('Session expired');
+        if (!res.ok) throw new Error('Current semester results error');
+        const data = await res.json();
+        currentResultsData = data;
+        if (u) writeLocalCache(`currentResults:${u}`, data);
+        return currentResultsData;
       } catch (err) {
         // DO NOT return demo/fake data.
         throw err;
@@ -3790,6 +4162,57 @@ function hideProfileSwitchPopup() {
       } catch (err) {
         if (!currentAttendanceList) {
           attendanceContent.innerHTML = '<p style="font-family:\'IBM Plex Mono\',monospace;font-size:13px;color:var(--ink-muted);text-align:center;padding:20px;border:1px dashed var(--header-border);margin:10px;border-radius:8px;">Unable to load attendance. Please check your connection and try again.</p>';
+        }
+      }
+    };
+
+    const loadInternalMarks = async () => {
+      showSection(internalMarksSection);
+      const previousList = currentInternalMarksList;
+      if (previousList && previousList.length > 0) {
+        renderInternalMarks(previousList);
+      } else {
+        internalMarksContent.innerHTML = '<p style="font-family:\'IBM Plex Mono\',monospace;font-size:13px;color:var(--ink-muted);text-align:center;padding:20px;">Loading internal marks...</p>';
+      }
+
+      // Unlike Attendance/Timetable, this always does a live fetch instead
+      // of serving the 30-min local cache — marks change often enough
+      // right after they're entered that "last-known" data isn't good
+      // enough here. Whatever was showing above stays up as a placeholder
+      // until the fresh fetch resolves, so there's no flash of "Loading...".
+      const u = localStorage.getItem('username') || sessionStorage.getItem('username') || '';
+      currentInternalMarksList = null;
+      if (u) localStorage.removeItem(`internalMarks:${u}`);
+
+      try {
+        const subjects = await ensureInternalMarksData(u);
+        renderInternalMarks(subjects);
+      } catch (err) {
+        // Fresh fetch failed — fall back to whatever we had before rather
+        // than wiping a perfectly good screen with an error message.
+        currentInternalMarksList = previousList;
+        if (previousList && previousList.length > 0) {
+          previousList.isCached = true;
+          renderInternalMarks(previousList);
+        } else {
+          internalMarksContent.innerHTML = '<p style="font-family:\'IBM Plex Mono\',monospace;font-size:13px;color:var(--ink-muted);text-align:center;padding:20px;border:1px dashed var(--header-border);margin:10px;border-radius:8px;">Unable to load internal marks. Please check your connection and try again.</p>';
+        }
+      }
+    };
+
+    const loadCurrentResults = async () => {
+      showSection(currentResultsSection);
+      if (currentResultsData && currentResultsData.subjects && currentResultsData.subjects.length > 0) {
+        renderCurrentResults(currentResultsData);
+      } else {
+        currentResultsContent.innerHTML = '<p style="font-family:\'IBM Plex Mono\',monospace;font-size:13px;color:var(--ink-muted);text-align:center;padding:20px;">Loading results...</p>';
+      }
+      try {
+        const data = await ensureCurrentResultsData();
+        renderCurrentResults(data);
+      } catch (err) {
+        if (!currentResultsData) {
+          currentResultsContent.innerHTML = '<p style="font-family:\'IBM Plex Mono\',monospace;font-size:13px;color:var(--ink-muted);text-align:center;padding:20px;border:1px dashed var(--header-border);margin:10px;border-radius:8px;">Unable to load results. Please check your connection and try again.</p>';
         }
       }
     };
@@ -4494,11 +4917,15 @@ function hideProfileSwitchPopup() {
         localStorage.removeItem(`profile:${u}`);
         localStorage.removeItem(`timetable:${u}`);
         localStorage.removeItem(`attendance:${u}`);
+        localStorage.removeItem(`internalMarks:${u}`);
+        localStorage.removeItem(`currentResults:${u}`);
       }
       sessionId = null;
       currentTimetableData = null;
       currentCoursesList = [];
       currentAttendanceList = null;
+      currentInternalMarksList = null;
+      currentResultsData = null;
 
       showSection(null);
       if (appHeader) appHeader.classList.remove('visible');
@@ -4508,6 +4935,8 @@ function hideProfileSwitchPopup() {
       timetableContent.innerHTML = '';
       coursesContent.innerHTML = '';
       attendanceContent.innerHTML = '';
+      internalMarksContent.innerHTML = '';
+      currentResultsContent.innerHTML = '';
       ledger.style.display = 'block';
       status.textContent = '';
       form.reset();
@@ -4551,6 +4980,8 @@ function hideProfileSwitchPopup() {
           localStorage.removeItem(`profile:${usernameToRemove}`);
           localStorage.removeItem(`timetable:${usernameToRemove}`);
           localStorage.removeItem(`attendance:${usernameToRemove}`);
+          localStorage.removeItem(`internalMarks:${usernameToRemove}`);
+          localStorage.removeItem(`currentResults:${usernameToRemove}`);
           if (usernameToRemove === activeUsername) {
             accountMenu.classList.remove('open');
             await performFullLogout();
@@ -4601,13 +5032,13 @@ function hideProfileSwitchPopup() {
           }
 
           await performLogin(account.username, accountPassword, { remember: true });
-          hideProfileSwitchPopup();
-          preloadAllPortalData(account.username);
-          ledger.style.display = 'none';
-          if (loginThemeBar) loginThemeBar.style.display = 'none';
-          if (appHeader) appHeader.classList.add('visible');
-          window.scrollTo(0, 0);
-          loadProfile(account.username);
+
+          // FIX: previously patched the DOM in place after switching (photo,
+          // sections, cached profile) but left every other panel — timetable,
+          // attendance, courses — showing whatever the last account's data
+          // was until each one happened to re-fetch. A full reload forces
+          // restoreSession() to rebuild the whole page from the new account's
+          // localStorage/session state, so nothing stale can linger.
           window.location.reload();
           return;
         } catch (err) {
@@ -4638,6 +5069,10 @@ function hideProfileSwitchPopup() {
         loadCourses();
       } else if (action === 'attendance') {
         loadAttendance();
+      } else if (action === 'internalMarks') {
+        loadInternalMarks();
+      } else if (action === 'currentResults') {
+        loadCurrentResults();
       } else if (action === 'markAttendance') {
         openMarkAttendance();
       }
