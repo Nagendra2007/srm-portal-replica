@@ -3854,6 +3854,8 @@ function hideProfileSwitchPopup() {
         try {
           await reconnectSession();
           hideSessionExpiredPopup();
+          window.location.reload();
+          return;
         } catch (err) {
           const msgEl = document.getElementById('sessionExpiredMessage');
           if (msgEl) {
