@@ -351,7 +351,7 @@ router.post('/ask', async (req, res) => {
     ])
     res.json({ answer })
   } catch (error) {
-    handleRouteError(res, error, 'Ask AI could not answer that right now')
+     res.status(500).send("Sorry");
   }
 })
 
