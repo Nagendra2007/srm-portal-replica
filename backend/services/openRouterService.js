@@ -51,11 +51,30 @@ export const askOpenRouter = async (systemPrompt, messages) => {
     )
   } catch (error) {
     const status = error.response?.status
-    const wrapped = new Error(
-      status === 429
-        ? 'Ask AI is rate-limited right now — try again in a moment.'
-        : 'Ask AI could not reach the model provider.'
-    )
+    const upstreamMsg = error.response?.data?.error?.message || error.response?.data?.message
+
+    let message
+    if (status === 429) {
+      message = 'Ask AI is rate-limited right now — try again in a moment.'
+    } else if (status === 401 || status === 403) {
+      message = 'Ask AI rejected the server API key. The OPENROUTER_API_KEY env var on the deploy is missing, invalid, or revoked.'
+    } else if (status && status >= 500) {
+      message = `Ask AI's model provider returned ${status}${upstreamMsg ? `: ${upstreamMsg}` : ''}.`
+    } else if (error.code === 'ENOTFOUND' || error.code === 'EAI_AGAIN') {
+      message = 'Ask AI could not resolve openrouter.ai from the deploy host (DNS blocked). Check egress firewall / DNS.'
+    } else if (error.code === 'ECONNREFUSED' || error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT') {
+      message = `Ask AI could not reach openrouter.ai from the deploy host (${error.code}). Egress to openrouter.ai is likely blocked.`
+    } else if (!status) {
+      message = `Ask AI could not reach the model provider: ${error.message}`
+    } else {
+      message = `Ask AI returned ${status}${upstreamMsg ? `: ${upstreamMsg}` : ''}.`
+    }
+
+    // Always log the underlying cause so the deploy console tells you what
+    // actually went wrong, even if the user only sees the sanitized message.
+    console.error('Ask AI upstream failure:', { code: error.code, status, upstreamMsg, raw: error.message })
+
+    const wrapped = new Error(message)
     wrapped.statusCode = status && status < 500 ? status : 502
     throw wrapped
   }
