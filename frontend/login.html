@@ -2628,6 +2628,23 @@
     position: relative;
   }
 
+  /* The radial nav FAB is fixed bottom-right; without this padding it sits
+     directly on top of the Ask AI input on mobile / when the page is
+     scrolled to the bottom. ~84px = FAB height (56) + bottom offset (20)
+     + a small visual gap. */
+  #askAiSection {
+    padding-bottom: 96px;
+  }
+
+  /* Hide the FAB while the student is actively interacting with Ask AI —
+     otherwise the floating button overlaps the round send button and the
+     user thinks they're tapping "send" but actually tapping the nav menu.
+     Re-enables as soon as focus leaves the chat. */
+  body.ask-ai-active .radial-fab,
+  body.ask-ai-active .radial-menu {
+    display: none !important;
+  }
+
   .ask-ai-input {
     flex: 1;
     padding: 12px 50px 12px 16px;
@@ -5209,67 +5226,24 @@ function hideProfileSwitchPopup() {
       });
     }
 
-    /* --------------------------------------------------------------------------
-       CLEAR CHAT
-       Re-renders the original greeting bubble and wipes askAiChatHistory so
-       the next question has no prior context. The greeting HTML is held as a
-       constant so we don't drift from whatever ships in the markup — any
-       change to the welcome message stays in one place.
-       -------------------------------------------------------------------------- */
-    const ASK_AI_GREETING_HTML = `
-      <div class="ai-message ai-bot">
-        <div class="ai-header-info">
-          <div class="ai-bot-avatar">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
-              <circle cx="12" cy="12" r="4"></circle>
-            </svg>
-          </div>
-          <span class="ai-name">SRM Sync Companion</span>
-        </div>
-        <div class="ai-bubble">
-          Hi! I'm your integrated portal assistant. Ask me questions like:
-          <div class="ai-chips">
-            <button class="ai-chip" type="button" data-question="Analyze my attendance status and tell me what is below 75%">"Analyze my attendance..."</button>
-            <button class="ai-chip" type="button" data-question="Show my class schedule for today">"Show today's schedule"</button>
-            <button class="ai-chip" type="button" data-question="What are my highest internal marks so far?">"Find my highest marks"</button>
-          </div>
-        </div>
-      </div>
-    `;
-
-    const clearAskAiChat = () => {
-      // Wipe the in-memory history so the next request starts cold.
-      askAiChatHistory = [];
-
-      // Don't drop an in-flight request — if the user clears mid-reply, the
-      // typing indicator must not survive into a "clean" chat.
-      if (askAiSubmitBtn) askAiSubmitBtn.disabled = false;
-      if (askAiInput) {
-        askAiInput.disabled = false;
-        askAiInput.value = '';
-      }
-
-      if (askAiChatArea) {
-        askAiChatArea.innerHTML = ASK_AI_GREETING_HTML;
-        askAiChatArea.scrollTop = 0;
-      }
-
-      // Visual confirmation on the button itself.
-      if (askAiClearBtn) {
-        askAiClearBtn.classList.remove('just-cleared');
-        // Force reflow so the animation can replay on consecutive clears.
-        // eslint-disable-next-line no-unused-expressions
-        askAiClearBtn.offsetWidth;
-        askAiClearBtn.classList.add('just-cleared');
-        setTimeout(() => askAiClearBtn.classList.remove('just-cleared'), 700);
-      }
-
-      if (askAiInput) askAiInput.focus();
+    // Keep the radial nav FAB out of the way while the student is interacting
+    // with Ask AI. Without this, the floating button (fixed bottom-right)
+    // visually overlaps the round send button and the student ends up tapping
+    // the nav menu when they think they're sending a message.
+    const setAskAiActive = (active) => {
+      if (!document.body) return;
+      document.body.classList.toggle('ask-ai-active', !!active);
     };
 
-    if (askAiClearBtn) {
-      askAiClearBtn.addEventListener('click', clearAskAiChat);
+    if (askAiInput) {
+      askAiInput.addEventListener('focus', () => setAskAiActive(true));
+      askAiInput.addEventListener('blur', () => setAskAiActive(false));
+    }
+    if (askAiSubmitBtn) {
+      // Keep the FAB hidden through the submit click too — focus leaves the
+      // input momentarily before the disabled-state focus change, which would
+      // otherwise flash the FAB back on.
+      askAiSubmitBtn.addEventListener('pointerdown', () => setAskAiActive(true));
     }
 
     const showMarkStatus = (message, isError) => {
