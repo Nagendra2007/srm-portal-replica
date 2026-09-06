@@ -6,7 +6,7 @@ const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'minimax/minimax-m3:free'
 
 export const askOpenRouter = async (systemPrompt, messages) => {
-  const apiKey = "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";
+  const apiKey = "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";
 
   if (!apiKey) {
     const err = new Error('Ask AI is not configured on the server (missing OPENROUTER_API_KEY)')
