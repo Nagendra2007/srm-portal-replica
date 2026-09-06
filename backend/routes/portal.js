@@ -334,14 +334,39 @@ router.post('/ask', async (req, res) => {
     .slice(-24)
     .map(m => ({ role: m.role, content: m.content.slice(0, 2000) }))
 
-  try {
-    const [timetable, attendance, internalMarks, currentSemesterResults] = await Promise.all([
-      getTimetableData(session).catch(() => null),
-      getAttendanceData(session).catch(() => null),
-      getInternalMarksData(session).catch(() => null),
-      getCurrentSemesterResultsData(session).catch(() => null)
-    ])
+  // NOTE: deliberately sequential, not Promise.all. The four report fetches
+  // share the same SRM JSP cookie session — running them in parallel causes
+  // the portal to invalidate the session mid-flight (which used to manifest
+  // as the "reinitate session" overlay popping on every Ask AI question).
+  // Sequential also keeps the serialized axios client happy.
+  let timetable = null
+  let attendance = null
+  let internalMarks = null
+  let currentSemesterResults = null
 
+  const safeFetch = async (label, fn) => {
+    try { return await fn() } catch (e) {
+      console.error(`Ask AI ${label} fetch error:`, e.message)
+      if (e.statusCode === 401) {
+        const err = new Error('SRM session expired')
+        err.statusCode = 401
+        throw err
+      }
+      return null
+    }
+  }
+
+  try {
+    timetable = await safeFetch('timetable', () => getTimetableData(session))
+    attendance = await safeFetch('attendance', () => getAttendanceData(session))
+    internalMarks = await safeFetch('internalMarks', () => getInternalMarksData(session))
+    currentSemesterResults = await safeFetch('currentSemesterResults', () => getCurrentSemesterResultsData(session))
+  } catch (error) {
+    handleRouteError(res, error, 'Ask AI could not answer that right now')
+    return
+  }
+
+  try {
     const systemPrompt = buildAskSystemPrompt({ timetable, attendance, internalMarks, currentSemesterResults })
 
     noStore(res)
@@ -351,7 +376,7 @@ router.post('/ask', async (req, res) => {
     ])
     res.json({ answer })
   } catch (error) {
-     res.status(500).send("Sorry");
+    handleRouteError(res, error, 'Ask AI could not answer that right now')
   }
 })
 
