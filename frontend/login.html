@@ -5492,10 +5492,18 @@ function hideProfileSwitchPopup() {
     const initSession = async () => {
       try {
         const res = await fetch(`${API_BASE}/api/session`);
+        if (!res.ok) throw new Error(`/api/session returned ${res.status}`);
         const data = await res.json();
-        sessionId = data.sessionId || res.headers.get('x-client-session') || ('sess_' + Date.now().toString(36));
+        // Prefer the JSON body, fall back to the header. Both are now sent by
+        // the server so this works whether CORS exposes the header or not.
+        sessionId = data.sessionId || res.headers.get('x-client-session');
+        if (!sessionId) throw new Error('Server did not return a session id');
       } catch (err) {
-        sessionId = 'sess_' + Date.now().toString(36);
+        // Do NOT silently invent a fake session id here — every /api/* call
+        // would 401, the UI would show "reinitiate session", and the real
+        // network/backend failure would be invisible. Surface it.
+        console.error('initSession failed:', err);
+        throw err;
       }
     };
 
@@ -5702,7 +5710,10 @@ function hideProfileSwitchPopup() {
       inMemoryPassword = password;
 
       if (!sessionId) {
-        sessionId = 'sess_' + Date.now().toString(36);
+        // Should never happen — initSession() runs at startup. If it did,
+        // it's the same root cause as the /api/session bug: we'd be sending
+        // a session id the server doesn't know, and login would 401.
+        throw new Error('No client session — please reload the page');
       }
 
       const res = await fetch(`${API_BASE}/api/login`, {
