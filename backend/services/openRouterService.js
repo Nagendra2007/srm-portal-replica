@@ -1,12 +1,20 @@
 import axios from 'axios'
 
 
-
+// NOTE: The API key must be supplied via the OPENROUTER_API_KEY environment
+// variable. There is no fallback in source — hard-coding it here would leak
+// the key to anyone with read access to the repo, and the previous literal
+// got rotated more than once because of that.
+//
+// The default model is the free tier of minimax/minimax-m3. Free-tier keys are
+// rate-limited aggressively on OpenRouter (HTTP 429), which surfaces to the
+// student as "rate-limited — try again in a moment". If that becomes a real
+// problem, set OPENROUTER_MODEL to a paid model in the env.
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || 'minimax/minimax-m3:free'
 
 export const askOpenRouter = async (systemPrompt, messages) => {
-  const apiKey = process.env.API_KEY;
+  const apiKey = process.env.API_KEY
 
   if (!apiKey) {
     const err = new Error('Ask AI is not configured on the server (missing OPENROUTER_API_KEY)')
@@ -25,7 +33,11 @@ export const askOpenRouter = async (systemPrompt, messages) => {
           ...messages
         ],
         temperature: 0.2,
-        max_tokens: 500
+        // 500 used to clip the model on longer factual answers (especially
+        // when the system prompt is large) and produced empty replies that
+        // surfaced as a 502 to the student. 800 leaves headroom without
+        // encouraging verbose output.
+        max_tokens: 800
       },
       {
         headers: {
