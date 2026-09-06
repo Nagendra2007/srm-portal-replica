@@ -31,18 +31,25 @@ app.use('/api', authRoutes)
 app.use('/api', portalRoutes)
 
 
-app.get('/api/session', async (req, res) => {
-  try {
-    const { sessionId, client } = createClientSession()
+app.get('/api/session', (req, res) => {
+  // Create the server-side session immediately so the frontend always gets a
+  // usable session id, even if the upstream SRM portal is unreachable from the
+  // deployment environment. Previously this endpoint awaited a real GET to
+  // student.srmap.edu.in before responding — when that timed out (which it
+  // does behind many hosting providers' egress firewalls), the catch returned
+  // 500 with no X-Client-Session header, the frontend fell back to a fake
+  // 'sess_<timestamp>' id, and every subsequent /api/* call came back 401,
+  // surfacing as the "reinitiate session" overlay.
+  //
+  // The login flow already warms the cookie jar via auth.js, so warming it
+  // here in the background is best-effort only.
+  const { sessionId, client } = createClientSession()
 
-    await client.get('https://student.srmap.edu.in/srmapstudentcorner/StudentLoginPage')
+  res.set('X-Client-Session', sessionId)
+  res.json({ sessionId, message: 'Session created' })
 
-    res.set('X-Client-Session', sessionId)
-    res.json({ message: 'Session created' })
-  } catch (error) {
-    console.error('Session creation error:', error.message)
-    res.status(500).json({ message: 'Failed to create session' })
-  }
+  client.get('https://student.srmap.edu.in/srmapstudentcorner/StudentLoginPage')
+    .catch((err) => console.warn('Background SRM warmup failed:', err.message))
 })
 
 
