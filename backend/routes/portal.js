@@ -16,6 +16,7 @@ import {
   REPORT_IDS
 } from '../services/srmPortalService.js'
 import { getCachedReport, saveReportCache } from '../services/reportCache.js'
+import { askOpenRouter } from '../services/openRouterService.js'
 
 const router = express.Router()
 
@@ -197,6 +198,160 @@ router.get('/current-semester-results', async (req, res) => {
     res.json(await getCurrentSemesterResultsData(session))
   } catch (error) {
     handleRouteError(res, error, 'Failed to fetch current semester results')
+  }
+})
+
+/* --------------------------------------------------------------------------
+   ASK AI
+   TEST MODE: general SRM AP knowledge questions are currently allowed (not
+   just the student's own data) at the person's explicit request, for
+   testing. This is a real accuracy tradeoff — the model has no verified
+   SRM AP source and can be confidently wrong about specific policies
+   (grading formulas, attendance-shortage %, deadlines, etc). The prompt
+   below tells it to flag uncertainty rather than presenting guesses as
+   fact, but that's a mitigation, not a guarantee. Before this goes in
+   front of real students for anything policy-related, tighten this back
+   down or add a real verified SRM knowledge base.
+   Still deliberately excludes profile/name/register-number from the data
+   sent — no reason to hand a third-party API PII the question doesn't need.
+   -------------------------------------------------------------------------- */
+/* --------------------------------------------------------------------------
+   ASK AI
+   TEST MODE: no behavioral restrictions on the model — it can answer
+   anything, using its own general knowledge plus the student's own data
+   below. That means no guardrail against hallucinated SRM-specific facts
+   (grading formulas, deadlines, policies, etc) and no plain-text/markdown
+   formatting rule either — whatever the model outputs goes straight to the
+   student. Fine for testing with real awareness of that; reintroduce
+   scoping/formatting rules here before this is something students rely on
+   for anything that matters.
+   Still deliberately excludes profile/name/register-number from the data
+   sent — no reason to hand a third-party API PII the question doesn't need.
+   -------------------------------------------------------------------------- */
+
+/* --------------------------------------------------------------------------
+   DAY-ORDER / "TODAY" RESOLUTION
+   The portal uses both real weekday names ("Monday", "Tuesday"...) and
+   abstract day orders ("Day 1" .. "Day 6") on the timetable. SRM's own
+   mapping is:
+       Sun -> Day 1, Mon -> Day 1, Tue -> Day 2, Wed -> Day 3,
+       Thu -> Day 4, Fri -> Day 5, Sat -> Day 6
+   (Week starts on Sunday, the same convention the frontend uses in its
+   dayOrderMap.) Without this context the model has no way to know which
+   row of the timetable to read when the student asks "what class is today"
+   or "what's my last class tomorrow".
+   -------------------------------------------------------------------------- */
+const DAY_ORDER_BY_WEEKDAY = {
+  0: 1, // Sunday
+  1: 1, // Monday
+  2: 2, // Tuesday
+  3: 3, // Wednesday
+  4: 4, // Thursday
+  5: 5, // Friday
+  6: 6  // Saturday
+}
+
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+const resolveTodayContext = (timetable, now = new Date()) => {
+  const weekday = now.getDay()
+  const dayOrder = DAY_ORDER_BY_WEEKDAY[weekday]
+  const weekdayName = WEEKDAY_NAMES[weekday]
+
+  // Schedule rows may be labelled with the weekday name or "Day N" — try both.
+  const schedule = Array.isArray(timetable?.schedule) ? timetable.schedule : []
+  const byName = schedule.find((d) => (d.day || '').trim().toLowerCase() === weekdayName.toLowerCase())
+  const byOrder = schedule.find((d) => (d.day || '').trim().toLowerCase() === `day ${dayOrder}`)
+  const todayRow = byName || byOrder || null
+
+  const todayClasses = todayRow
+    ? (todayRow.slots || [])
+        .filter((s) => s && (s.code || s.subjectName || s.courseTitle || s.title))
+        .map((s) => ({
+          period: s.slotNumber || s.period,
+          time: s.timing || s.time,
+          code: s.code || s.courseCode,
+          subject: s.subjectName || s.courseTitle || s.title || s.code,
+          room: s.room || s.roomNo
+        }))
+    : []
+
+  return {
+    today: {
+      isoDate: now.toISOString().slice(0, 10),
+      weekday: weekdayName,
+      dayOrder: `Day ${dayOrder}`,
+      classes: todayClasses
+    }
+  }
+}
+
+const buildAskSystemPrompt = (data) => {
+  const now = new Date()
+  const nowContext = resolveTodayContext(data?.timetable, now)
+  const serverTime = now.toISOString()
+
+  return [
+    'You are "Ask AI", a feature inside a student portal app called SRMSync.',
+    '',
+    'CURRENT SERVER TIME (UTC, source of truth for any date/day question):',
+    serverTime,
+    '',
+    'PRECOMPUTED "TODAY" CONTEXT for this student (already resolved from their timetable — use it directly, do not recompute):',
+    JSON.stringify(nowContext),
+    '',
+    "Interpretation rules:",
+    `- "today" = the date above; "tomorrow" = +1 day (next weekday's classes).`,
+    `- "Day ${nowContext.today.dayOrder.replace('Day ', '')}" is the same as "${nowContext.today.weekday}".`,
+    '- When listing today\'s classes, read from today.classes[] above — those slot numbers, times and rooms are already correct.',
+    '',
+    "Here is the student's own academic data you have access to, if relevant to the question:",
+    '',
+    'STUDENT DATA JSON:',
+    JSON.stringify(data)
+  ].join('\n')
+}
+
+router.post('/ask', async (req, res) => {
+  const session = requireSession(req, res)
+  if (!session) return
+
+  const question = (req.body && typeof req.body.question === 'string' ? req.body.question : '').trim()
+  const history = Array.isArray(req.body?.history) ? req.body.history : []
+
+  if (!question) {
+    return res.status(400).json({ message: 'A question is required' })
+  }
+  if (question.length > 400) {
+    return res.status(400).json({ message: 'Question is too long (max 400 characters)' })
+  }
+
+  // Cap how much history we forward — keeps the request bounded and avoids
+  // a caller sending an unbounded array. Last 12 turns (24 messages) is
+  // plenty of working memory for this feature.
+  const trimmedHistory = history
+    .filter(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+    .slice(-24)
+    .map(m => ({ role: m.role, content: m.content.slice(0, 2000) }))
+
+  try {
+    const [timetable, attendance, internalMarks, currentSemesterResults] = await Promise.all([
+      getTimetableData(session).catch(() => null),
+      getAttendanceData(session).catch(() => null),
+      getInternalMarksData(session).catch(() => null),
+      getCurrentSemesterResultsData(session).catch(() => null)
+    ])
+
+    const systemPrompt = buildAskSystemPrompt({ timetable, attendance, internalMarks, currentSemesterResults })
+
+    noStore(res)
+    const answer = await askOpenRouter(systemPrompt, [
+      ...trimmedHistory,
+      { role: 'user', content: question }
+    ])
+    res.json({ answer })
+  } catch (error) {
+    handleRouteError(res, error, 'Ask AI could not answer that right now')
   }
 })
 
