@@ -2298,7 +2298,6 @@
       transition: none !important;
     }
   }
-<<<<<<< HEAD
 
   /* ==========================================================================
      ASK AI CHAT CO-PILOT VIEW
@@ -2786,8 +2785,6 @@
     0%, 100% { transform: scale(0.6); opacity: 0.4; }
     50% { transform: scale(1.2); opacity: 1; }
   }
-=======
->>>>>>> parent of 0102871 (Update print statement from 'Hello' to 'Goodbye')
 </style>
 
 <style id="profile-switch-popup-style">
@@ -3240,6 +3237,76 @@ body.session-expired-active > *:not(#sessionExpiredOverlay){
       <div id="todayAttendanceStatus" class="today-attendance-status"></div>
     </section>
 
+    <!-- 7. ASK AI PANEL -->
+    <section id="askAiSection" class="profile-panel" style="display: none;">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Instant Portal Copilot</p>
+          <h2>Ask AI</h2>
+        </div>
+        <div class="panel-header-actions">
+          <button type="button" id="askAiClearBtn" class="ask-ai-clear-btn" aria-label="Clear chat history" title="Clear chat history">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
+              <path d="M10 11v6M14 11v6"></path>
+              <path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"></path>
+            </svg>
+            <span>Clear Chat</span>
+          </button>
+          <span class="panel-badge">Companion Co-Pilot</span>
+        </div>
+      </div>
+
+      <div class="ask-ai-container">
+        <!-- Explainer alert box describing capabilities in professional non-bloated tone -->
+        <div class="ai-notice-box">
+          <svg class="ai-notice-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="16" x2="12" y2="12"></line>
+            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+          </svg>
+          <div class="ai-notice-text">
+            <strong>Personal Copilot:</strong> Ask anything about your schedule, attendance thresholds, grades, or results. All reasoning is done based on your active SRM session data.
+          </div>
+        </div>
+
+        <!-- Chat history bubble area -->
+        <div class="ask-ai-chat-area" id="askAiChatArea">
+          <div class="ai-message ai-bot">
+            <div class="ai-header-info">
+              <div class="ai-bot-avatar">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path>
+                  <circle cx="12" cy="12" r="4"></circle>
+                </svg>
+              </div>
+              <span class="ai-name">SRM Sync Companion</span>
+            </div>
+            <div class="ai-bubble">
+              Hi! I'm your integrated portal assistant. Ask me questions like:
+              <div class="ai-chips">
+                <button class="ai-chip" type="button" data-question="Analyze my attendance status and tell me what is below 75%">"Analyze my attendance..."</button>
+                <button class="ai-chip" type="button" data-question="Show my class schedule for today">"Show today's schedule"</button>
+                <button class="ai-chip" type="button" data-question="What are my highest internal marks so far?">"Find my highest marks"</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Chat Input Form -->
+        <form id="askAiForm" class="ask-ai-input-form">
+          <input type="text" id="askAiInput" class="ask-ai-input" placeholder="Ask about timetable, attendance, results..." maxlength="400" autocomplete="off" required>
+          <button type="submit" id="askAiSubmitBtn" class="ask-ai-submit-btn" aria-label="Send query">
+            <svg class="send-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </form>
+      </div>
+    </section>
+
   </main>
 
 <div id="profileSwitchOverlay" aria-hidden="true" role="status" aria-live="polite">
@@ -3510,6 +3577,13 @@ function hideProfileSwitchPopup() {
     const currentResultsContent = document.getElementById('currentResultsContent');
     const currentResultsSgpaBadge = document.getElementById('currentResultsSgpaBadge');
 
+    const askAiSection = document.getElementById('askAiSection');
+    const askAiForm = document.getElementById('askAiForm');
+    const askAiInput = document.getElementById('askAiInput');
+    const askAiChatArea = document.getElementById('askAiChatArea');
+    const askAiSubmitBtn = document.getElementById('askAiSubmitBtn');
+    const askAiClearBtn = document.getElementById('askAiClearBtn');
+
     let currentTimetableData = null;
     let currentCoursesList = [];
     let activeDayFilter = 'TODAY';
@@ -3522,6 +3596,7 @@ function hideProfileSwitchPopup() {
       markAttendanceSection.style.display = 'none';
       internalMarksSection.style.display = 'none';
       currentResultsSection.style.display = 'none';
+      askAiSection.style.display = 'none';
       if (activeSec) activeSec.style.display = 'block';
     };
 
@@ -4796,7 +4871,6 @@ function hideProfileSwitchPopup() {
       }
     };
 
-<<<<<<< HEAD
     /* --------------------------------------------------------------------------
        6.5 ASK AI CO-PILOT CONTROLLER & CHAT SYSTEM
        -------------------------------------------------------------------------- */
@@ -5172,8 +5246,6 @@ function hideProfileSwitchPopup() {
       askAiSubmitBtn.addEventListener('pointerdown', () => setAskAiActive(true));
     }
 
-=======
->>>>>>> parent of 0102871 (Update print statement from 'Hello' to 'Goodbye')
     const showMarkStatus = (message, isError) => {
       const icon = isError ? '!' : '\u2713';
       markAttendanceStatus.innerHTML = `<span class="status-icon">${icon}</span><span>${message}</span>`;
@@ -5838,6 +5910,7 @@ function hideProfileSwitchPopup() {
       { action: 'attendance', label: 'Attendance', icon: '<polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>' },
       { action: 'internalMarks', label: 'Internal Marks', icon: '<path d="M9 11H3v10h6z"/><path d="M15 5H9v16h6z"/><path d="M21 3h-6v18h6z"/>' },
       { action: 'currentResults', label: 'Results', icon: '<path d="M12 15l-4-4h8z"/><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8h8"/>' },
+      { action: 'askAi', label: 'Ask AI', icon: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>' },
       { action: 'markAttendance', label: 'Mark Attendance', icon: '<polyline points="20 6 9 17 4 12"/>' }
     ];
 
@@ -6237,6 +6310,8 @@ function hideProfileSwitchPopup() {
         loadInternalMarks();
       } else if (action === 'currentResults') {
         loadCurrentResults();
+      } else if (action === 'askAi') {
+        loadAskAi();
       } else if (action === 'markAttendance') {
         openMarkAttendance();
       }
